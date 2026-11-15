@@ -17,7 +17,7 @@ Google Apps Script + Google Drive (ไฟล์ต้นฉบับไม่ล
 | `Index.html` | Frontend UI ภาษาไทย |
 
 ## ลิงก์ใช้งาน
-https://kpdev24.github.io/photodrop-event-gallery/ (`docs/index.html` ฝังเว็บแอป Apps Script)
+https://kpdev24.github.io/KPhotoDrop/ (`docs/index.html` ฝังเว็บแอป Apps Script)
 
 ถ้า Deploy ใหม่จนได้ลิงก์ `/exec` ใหม่ ให้แก้ค่า `EXEC` ใน `docs/index.html`
 
