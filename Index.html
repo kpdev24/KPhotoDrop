@@ -170,6 +170,8 @@
 
 <script>
 const APP_URL_PARAM = '<?= albumParam ?>';
+// ลิงก์สาธารณะที่ใช้ใน QR Code และการแชร์ (เว้นว่าง '' เพื่อใช้ลิงก์ Google Apps Script)
+const PUBLIC_BASE = 'https://kpdev24.github.io/photodrop-event-gallery/';
 let WEB_URL = '', TOKEN = sessionStorage.getItem('pd_token') || '', USER = JSON.parse(sessionStorage.getItem('pd_user') || 'null');
 let albums = [], curAlbum = null, files = [], view = [], filter = 'all', lbIdx = 0, adminAlbums = [];
 
@@ -300,7 +302,8 @@ document.addEventListener('keydown', e => { if(byId('lb').classList.contains('hi
 (() => { let x0=null; const el=byId('lb'); el.addEventListener('touchstart',e=>x0=e.touches[0].clientX,{passive:true}); el.addEventListener('touchend',e=>{ if(x0===null)return; const dx=e.changedTouches[0].clientX-x0; if(Math.abs(dx)>50) lbNav(dx<0?1:-1); x0=null; }); })();
 
 // ===== SHARE / QR =====
-const albumUrl = a => (WEB_URL || location.href.split('?')[0]) + '?album=' + a.id;
+const baseUrl = () => PUBLIC_BASE || WEB_URL || location.href.split('?')[0];
+const albumUrl = a => baseUrl() + '?album=' + a.id;
 function openShare(a = curAlbum){
   const u = albumUrl(a), t = encodeURIComponent('ภาพกิจกรรม: ' + a.name), eu = encodeURIComponent(u);
   openModal(`<h3 class="font-bold text-lg mb-4">🔗 แชร์อัลบั้ม</h3>
@@ -318,7 +321,7 @@ function copyLink(u){ navigator.clipboard.writeText(u).then(()=>toast('คัด
 function openQRId(id){ const a=albums.find(x=>x.id===id)||adminAlbums.find(x=>x.id===id); if(a) openQR(a); }
 function openQR(a){
   if(!a) return; const all = a==='all';
-  const base = WEB_URL || location.href.split('?')[0], u = all ? base : albumUrl(a);
+  const u = all ? baseUrl() : albumUrl(a);
   const list = (adminAlbums.length?adminAlbums:albums);
   const title = all ? 'QR Code รวมทุกอัลบั้ม' : 'QR Code เฉพาะอัลบั้ม', sub = all ? 'สแกนเพื่อเปิดหน้ารวมอัลบั้มที่เปิดแสดงผลทั้งหมด' : a.name;
   window._qrName = all ? 'ภาพกิจกรรมทั้งหมด' : a.name;

@@ -16,6 +16,11 @@ Google Apps Script + Google Drive (ไฟล์ต้นฉบับไม่ล
 | `Code.gs` | Backend: Drive, Sheets, Auth, Upload, ZIP |
 | `Index.html` | Frontend UI ภาษาไทย |
 
+## ลิงก์ใช้งาน
+https://kpdev24.github.io/photodrop-event-gallery/ (`docs/index.html` ฝังเว็บแอป Apps Script)
+
+ถ้า Deploy ใหม่จนได้ลิงก์ `/exec` ใหม่ ให้แก้ค่า `EXEC` ใน `docs/index.html`
+
 ## ติดตั้ง
 1. สร้าง Google Sheet ใหม่ → ส่วนขยาย → Apps Script
 2. วาง `Code.gs` และสร้างไฟล์ HTML ชื่อ `Index` วาง `Index.html`
