@@ -15,14 +15,12 @@ Google Apps Script + Google Drive (ไฟล์ต้นฉบับไม่ล
 |---|---|
 | `Code.gs` | Backend: Drive, Sheets, Auth, Upload, ZIP |
 | `Index.html` | Frontend UI ภาษาไทย |
-| `demo/PhotoDrop_Demo.html` | เดโม่ไฟล์เดียว ข้อมูลจำลอง (เปิดในเบราว์เซอร์ได้ทันที) |
-| `docs/index.html` | เดโม่สำหรับ GitHub Pages: https://kpdev24.github.io/photodrop-event-gallery/ |
 
 ## ติดตั้ง
 1. สร้าง Google Sheet ใหม่ → ส่วนขยาย → Apps Script
 2. วาง `Code.gs` และสร้างไฟล์ HTML ชื่อ `Index` วาง `Index.html`
 3. Deploy → Web app: Execute as **Me**, Who has access **Anyone**
-4. เข้าระบบ `admin` / `admin1234` แล้ว **เปลี่ยนรหัสผ่านทันที**
+4. เข้าระบบ `admin` / `456789` แล้ว **เปลี่ยนรหัสผ่านทันที**
 5. เมนูตั้งค่าระบบ → ใส่ Drive Folder ID หลัก → ทดสอบการเชื่อมต่อ → บันทึก
 
 ## ข้อจำกัด

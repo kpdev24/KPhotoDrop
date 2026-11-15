@@ -50,8 +50,8 @@ function setupSheets_() {
   });
   const users = ss.getSheetByName(SHEET_USERS);
   if (users.getLastRow() < 2) {
-    // แอดมินเริ่มต้น: admin / admin1234 (กรุณาเปลี่ยนรหัสผ่านทันทีหลังเข้าสู่ระบบ)
-    users.appendRow([uid_(), 'admin', hash_('admin1234'), 'ผู้ดูแลระบบ', 'admin', 'Active', new Date()]);
+    // แอดมินเริ่มต้น: admin / 456789 (กรุณาเปลี่ยนรหัสผ่านทันทีหลังเข้าสู่ระบบ)
+    users.appendRow([uid_(), 'admin', hash_('456789'), 'ผู้ดูแลระบบ', 'admin', 'Active', new Date()]);
   }
   const st = ss.getSheetByName(SHEET_SETTINGS);
   if (st.getLastRow() < 2) {
