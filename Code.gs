@@ -319,3 +319,18 @@ function testFolder(token, id) {
   try { const f = DriveApp.getFolderById(String(id).trim()); return { ok: true, name: f.getName(), url: f.getUrl() }; }
   catch (e) { throw new Error('เชื่อมต่อไม่สำเร็จ: ไม่พบโฟลเดอร์หรือไม่มีสิทธิ์เข้าถึง'); }
 }
+
+// ====== DOWNLOAD SINGLE FILE (ไม่ต้องเปิด Google Drive) ======
+/** ส่งไฟล์ต้นฉบับกลับเป็น Base64 เพื่อบันทึกลงเครื่องได้ทันที (รองรับเบราว์เซอร์ในแอป LINE / Messenger) */
+function getFileData(fileId, token) {
+  const f = DriveApp.getFileById(fileId);
+  let staff = false;
+  if (token) { try { auth_(token); staff = true; } catch (e) {} }
+  if (!staff) {
+    const parents = []; const it = f.getParents(); while (it.hasNext()) parents.push(it.next().getId());
+    const ok = rows_(SHEET_ALBUMS).some(a => isAlbumVisible_(a) && parents.indexOf(a.folderId) > -1);
+    if (!ok) throw new Error('ไม่มีสิทธิ์ดาวน์โหลดไฟล์นี้');
+  }
+  if (f.getSize() > ZIP_PART_LIMIT) return { tooBig: true, url: 'https://drive.google.com/uc?export=download&id=' + fileId, name: f.getName() };
+  return { name: f.getName(), mime: f.getMimeType(), base64: Utilities.base64Encode(f.getBlob().getBytes()) };
+}

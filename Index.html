@@ -100,7 +100,7 @@
       <div id="upProg" class="mt-4 space-y-2"></div>
       <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
         <h4 class="font-semibold">ไฟล์ในอัลบั้มนี้</h4>
-        <button class="btn btn-g" onclick="shareAlbumById(byId('upAlbum').value)">🔗 แชร์ลิงก์อัลบั้ม</button>
+        <div class="flex flex-wrap gap-2"><button class="btn btn-p" onclick="adminZip(byId('upAlbum').value)">⬇️ ดาวน์โหลดทั้งอัลบั้ม (.zip)</button><button class="btn btn-g" onclick="shareAlbumById(byId('upAlbum').value)">🔗 แชร์ลิงก์อัลบั้ม</button></div>
       </div>
       <div id="manageFiles" class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 mt-3"></div>
     </div>
@@ -153,7 +153,7 @@
   <div class="flex items-center justify-between p-3 text-white gap-2">
     <span id="lbName" class="text-sm truncate min-w-0"></span>
     <div class="flex gap-2 shrink-0">
-      <a id="lbDl" class="btn bg-white/15 text-white" target="_blank">⬇️ <span class="hidden sm:inline">ดาวน์โหลดต้นฉบับ</span></a>
+      <button id="lbDl" class="btn btn-p" onclick="dlFile(view[lbIdx])">⬇️ <span class="hidden sm:inline">บันทึกภาพต้นฉบับ</span></button>
       <button class="btn bg-white/15 text-white" onclick="closeLB()">✕</button>
     </div>
   </div>
@@ -246,13 +246,27 @@ function setFilter(f){
     <div class="tile" onclick="openLB(${i})">
       <img src="${x.thumb}" loading="lazy" onerror="this.style.display='none'">
       ${x.type==='video'?'<div class="absolute inset-0 flex items-center justify-center"><span class="bg-black/50 text-white rounded-full w-12 h-12 flex items-center justify-center text-xl">▶</span></div>':''}
-      <a href="${x.download}" target="_blank" onclick="event.stopPropagation()" class="absolute bottom-1.5 right-1.5 bg-[#0b0d12]/90 rounded-lg px-2 py-1 text-xs shadow">⬇️</a>
+      <button onclick="event.stopPropagation();dlFile(view[${i}])" class="absolute bottom-1.5 right-1.5 bg-[#0b0d12]/90 hover:bg-[#ff7a1a] rounded-lg px-2 py-1 text-xs shadow">⬇️</button>
     </div>`).join('') : '<p class="col-span-full text-center text-[#8b93a7] py-16">ไม่มีไฟล์ในหมวดนี้</p>';
 }
 
 // ===== DOWNLOAD ALL AS ZIP =====
 async function downloadAllZip(){
   if (!curAlbum) return;
+  if (IN_APP) {
+    const pageUrl = baseUrl() + '?album=' + curAlbum.id;
+    const chrome = /Android/i.test(navigator.userAgent) ? 'intent://' + pageUrl.replace(/^https?:\/\//,'') + '#Intent;scheme=https;package=com.android.chrome;end' : pageUrl;
+    openModal(`<h3 class="font-bold text-lg mb-2">📦 ดาวน์โหลดทั้งอัลบั้ม</h3>
+      <p class="text-sm text-[#8b93a7] mb-4">แอป Messenger / LINE ไม่รองรับการบันทึกไฟล์ ZIP กรุณาเปิดหน้านี้ใน Chrome หรือ Safari แล้วกดดาวน์โหลดทั้งอัลบั้มอีกครั้ง</p>
+      <a href="${chrome}" target="_blank" class="btn btn-p w-full">🌐 เปิดใน Chrome / Safari</a>
+      <button class="btn btn-g w-full mt-2" onclick="copyLink('${pageUrl}')">📋 คัดลอกลิงก์ไปเปิดเอง</button>
+      <button class="btn btn-g w-full mt-2" onclick="closeModal();zipAnyway()">ลองดาวน์โหลดในแอปนี้</button>
+      <button class="btn btn-g w-full mt-2" onclick="closeModal()">ปิด</button>`);
+    return;
+  }
+  zipAnyway();
+}
+async function zipAnyway(){
   const btn = byId('btnZip'); btn.disabled = true;
   openModal(`<h3 class="font-bold text-lg mb-2">📦 กำลังเตรียมไฟล์ ZIP</h3>
     <p id="zipMsg" class="text-sm text-[#8b93a7] mb-3">กำลังตรวจสอบไฟล์ในอัลบั้ม...</p>
@@ -286,13 +300,38 @@ function saveBase64(b64, name, mime){
   setTimeout(()=>URL.revokeObjectURL(url), 60000);
 }
 
+// ===== SAVE SINGLE FILE (ไม่เด้งออกไป Google Drive) =====
+const IN_APP = /FBAN|FBAV|FB_IAB|Messenger|Line\/|Instagram|TikTok/i.test(navigator.userAgent);
+const toBlob = (b64, mime) => { const bin = atob(b64), arr = new Uint8Array(bin.length); for (let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i); return new Blob([arr],{type:mime}); };
+async function dlFile(f){
+  if(!f) return;
+  toast('กำลังเตรียมไฟล์ต้นฉบับ...','info');
+  try {
+    const d = await call('getFileData', f.id, TOKEN);
+    if (d.tooBig) { toast('ไฟล์ใหญ่เกินไป กำลังเปิดลิงก์ดาวน์โหลดโดยตรง','info'); window.open(d.url,'_blank'); return; }
+    const url = URL.createObjectURL(toBlob(d.base64, d.mime));
+    if (IN_APP && /^image\//.test(d.mime)) {
+      // เบราว์เซอร์ในแอป (Messenger/LINE) ไม่รองรับปุ่มดาวน์โหลด → ให้กดค้างที่ภาพเพื่อบันทึก
+      openModal(`<h3 class="font-bold text-lg mb-1">📥 บันทึกภาพลงเครื่อง</h3>
+        <p class="text-sm text-[#8b93a7] mb-3"><b class="text-[#ff7a1a]">กดค้างที่ภาพ</b> แล้วเลือก "บันทึกภาพ / ดาวน์โหลดรูปภาพ"</p>
+        <img src="${url}" class="w-full rounded-xl mb-3" alt="${esc(d.name)}">
+        <a href="${url}" download="${esc(d.name)}" class="btn btn-p w-full">⬇️ ดาวน์โหลด (ถ้าเครื่องรองรับ)</a>
+        <button class="btn btn-g w-full mt-2" onclick="closeModal()">ปิด</button>`);
+      return;
+    }
+    const a = document.createElement('a'); a.href = url; a.download = d.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+    toast('บันทึกไฟล์แล้ว: ' + d.name);
+  } catch(e){ toast(e.message,'err'); }
+}
+
 // ===== LIGHTBOX =====
 function openLB(i){ lbIdx = i; byId('lb').classList.remove('hide'); document.body.style.overflow='hidden'; renderLB(); }
 function closeLB(){ byId('lb').classList.add('hide'); byId('lbBody').innerHTML=''; document.body.style.overflow=''; }
 function lbNav(d){ lbIdx = (lbIdx + d + view.length) % view.length; renderLB(); }
 function renderLB(){
   const f = view[lbIdx]; if(!f) return;
-  byId('lbName').textContent = `${f.name} (${fmtSize(f.size)})`; byId('lbDl').href = f.download;
+  byId('lbName').textContent = `${f.name} (${fmtSize(f.size)})`; 
   byId('lbCount').textContent = `${lbIdx+1} / ${view.length}`;
   byId('lbBody').innerHTML = f.type==='video'
     ? `<iframe src="${f.preview}" class="w-full max-w-4xl aspect-video rounded-lg" allow="autoplay; fullscreen" allowfullscreen></iframe>`
@@ -446,6 +485,7 @@ function renderAlbumRows(){
       <button class="btn btn-g text-xs px-2" onclick="albumForm('${a.id}')" title="แก้ไข">✏️</button>
       <button class="btn btn-d text-xs px-2" onclick="delAlbum('${a.id}')" title="ลบ">🗑</button></td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-[#8b93a7] py-8">ยังไม่มีอัลบั้ม</td></tr>';
 }
+async function adminZip(id){ if(!id) return; const a=adminAlbums.find(x=>x.id===id); curAlbum=a; zipAnyway(); }
 function openAlbumAdmin(id){ openAlbum(id); }
 function albumForm(id){
   const a = adminAlbums.find(x=>x.id===id) || {status:'Active'};
