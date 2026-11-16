@@ -65,7 +65,7 @@
         </div>
         <div class="flex flex-wrap gap-2">
           <button id="btnZip" class="btn btn-p" onclick="downloadAllZip()">⬇️ ดาวน์โหลดทั้งอัลบั้ม (.zip)</button>
-          <button class="btn btn-g" onclick="openShare()">🔗 แชร์</button>
+          <button class="btn btn-p" onclick="faceSearchUI()">🙋 ค้นหาภาพของฉัน</button><button class="btn btn-g" onclick="openShare()">🔗 แชร์</button>
           <button class="btn btn-g" onclick="openQR(curAlbum)">▣ QR Code</button>
         </div>
       </div>
@@ -73,6 +73,7 @@
         <button class="btn btn-g fbtn tab-a" data-f="all" onclick="setFilter('all')">ทั้งหมด</button>
         <button class="btn btn-g fbtn" data-f="image" onclick="setFilter('image')">🖼️ ภาพนิ่ง</button>
         <button class="btn btn-g fbtn" data-f="video" onclick="setFilter('video')">🎬 วิดีโอ</button>
+        <button id="fMine" class="btn btn-g fbtn hide" data-f="mine" onclick="setFilter('mine')">🙋 ภาพของฉัน</button>
       </div>
     </div>
     <div id="fileGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3"></div>
@@ -230,7 +231,7 @@ async function openAlbum(id){
   show('vAlbum'); byId('fileGrid').innerHTML = loader; byId('aName').textContent = 'กำลังโหลด...'; byId('aDesc').textContent=''; byId('aMeta').textContent='';
   try {
     const d = await call('getAlbumFiles', id, TOKEN);
-    curAlbum = d.album; files = d.files; filter = 'all';
+    curAlbum = d.album; files = d.files; filter = 'all'; myMatches = {}; byId('fMine').classList.add('hide');
     history.replaceState(null,'','?album='+id);
     byId('aName').textContent = curAlbum.name; byId('aDesc').textContent = curAlbum.description || '';
     const total = files.reduce((s,f)=>s+f.size,0);
@@ -241,7 +242,7 @@ async function openAlbum(id){
 }
 function setFilter(f){
   filter = f; document.querySelectorAll('.fbtn').forEach(b => b.classList.toggle('tab-a', b.dataset.f===f));
-  view = files.filter(x => f==='all' || x.type===f);
+  view = f==='mine' ? files.filter(x => myMatches[x.id] !== undefined).sort((a,b)=>myMatches[a.id]-myMatches[b.id]) : files.filter(x => f==='all' || x.type===f);
   byId('fileGrid').innerHTML = view.length ? view.map((x,i) => `
     <div class="tile" onclick="openLB(${i})">
       <img src="${x.thumb}" loading="lazy" onerror="this.style.display='none'">
@@ -323,6 +324,117 @@ async function dlFile(f){
     setTimeout(()=>URL.revokeObjectURL(url), 60000);
     toast('บันทึกไฟล์แล้ว: ' + d.name);
   } catch(e){ toast(e.message,'err'); }
+}
+
+// ===== FACE SEARCH: ค้นหาภาพของฉัน =====
+let myMatches = {}, faceReady = null;
+const FACE_CDN = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.13';
+const FACE_THRESHOLD = 0.5; // ยิ่งน้อยยิ่งเข้มงวด (0.45–0.55)
+function loadFaceApi(){
+  if (faceReady) return faceReady;
+  faceReady = new Promise((res, rej) => {
+    const sc = document.createElement('script'); sc.src = FACE_CDN + '/dist/face-api.js';
+    sc.onload = async () => { try {
+      const M = FACE_CDN + '/model';
+      await faceapi.nets.ssdMobilenetv1.loadFromUri(M);
+      await faceapi.nets.faceLandmark68Net.loadFromUri(M);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(M);
+      res(faceapi);
+    } catch(e){ faceReady = null; rej(new Error('โหลดโมเดล AI ไม่สำเร็จ กรุณาลองใหม่')); } };
+    sc.onerror = () => { faceReady = null; rej(new Error('โหลด AI ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ต')); };
+    document.head.appendChild(sc);
+  });
+  return faceReady;
+}
+const imgFrom = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+const round3 = d => Array.from(d, v => Math.round(v * 1000) / 1000);
+async function descriptorsOf(src, maxFaces){
+  const img = await imgFrom(src);
+  const det = await faceapi.detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.45 })).withFaceLandmarks().withFaceDescriptors();
+  return det.slice(0, maxFaces || 50).map(d => round3(d.descriptor));
+}
+function faceProgress(msg, pct){ const m = byId('fsMsg'), b = byId('fsBar'); if (m) m.innerHTML = msg; if (b && pct !== undefined) b.style.width = pct + '%'; }
+
+/** สแกนภาพที่ยังไม่มีดัชนี (ดึงทีละ 6 ภาพ) */
+async function indexMissing(albumId, data, onProgress, save){
+  const missing = data.imageIds.filter(id => !data.index[id]);
+  let done = 0;
+  for (let i = 0; i < missing.length; i += 6) {
+    const batch = await call('getFaceThumbs', albumId, missing.slice(i, i + 6), TOKEN);
+    const part = {};
+    for (const t of batch) {
+      try { part[t.id] = t.data ? await descriptorsOf(t.data) : []; } catch(e) { part[t.id] = []; }
+      data.index[t.id] = part[t.id]; done++;
+      onProgress(done, missing.length);
+    }
+    if (save) { try { await call('saveFaceIndex', TOKEN, albumId, part); } catch(e) {} }
+  }
+}
+
+function faceSearchUI(){
+  if (!curAlbum) return;
+  openModal(`<h3 class="font-bold text-lg mb-1">🙋 ค้นหาภาพของฉัน</h3>
+    <p class="text-sm text-[#8b93a7] mb-4">อัปโหลดภาพหน้าตรงของคุณ 1 ภาพ AI จะค้นหาภาพที่มีคุณในอัลบั้มนี้ให้</p>
+    <label id="fsPick" class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[#262c39] hover:border-[#ff7a1a] rounded-2xl p-6 cursor-pointer text-center">
+      <span class="text-4xl">🤳</span><span class="font-medium">แตะเพื่อถ่าย / เลือกภาพเซลฟี่</span>
+      <span class="text-xs text-[#8b93a7]">เห็นใบหน้าชัด ไม่ใส่แว่นดำ/หน้ากาก</span>
+      <input type="file" accept="image/*" capture="user" class="hidden" onchange="runFaceSearch(this.files[0])">
+    </label>
+    <div id="fsRun" class="hide">
+      <div class="flex items-center gap-3 mb-3"><img id="fsSelf" class="w-16 h-16 rounded-xl object-cover"><p id="fsMsg" class="text-sm text-[#8b93a7] flex-1"></p></div>
+      <div class="w-full bg-[#1b202b] rounded-full h-2.5 overflow-hidden"><div id="fsBar" class="h-2.5 bg-gradient-to-r from-[#ff7a1a] to-[#ff9a3d] transition-all" style="width:3%"></div></div>
+    </div>
+    <p class="text-[11px] text-[#8b93a7] mt-4">🔒 ภาพเซลฟี่ประมวลผลในเครื่องของคุณเท่านั้น ไม่ถูกส่งหรือบันทึกที่เซิร์ฟเวอร์</p>
+    <button class="btn btn-g w-full mt-3" onclick="closeModal()">ปิด</button>`);
+}
+
+async function runFaceSearch(file){
+  if (!file) return;
+  const selfUrl = URL.createObjectURL(file);
+  byId('fsPick').classList.add('hide'); byId('fsRun').classList.remove('hide'); byId('fsSelf').src = selfUrl;
+  try {
+    faceProgress('กำลังโหลด AI ตรวจจับใบหน้า... (ครั้งแรกอาจใช้เวลาสักครู่)', 8);
+    await loadFaceApi();
+    faceProgress('กำลังวิเคราะห์ใบหน้าของคุณ...', 15);
+    const mine = await descriptorsOf(selfUrl, 1);
+    if (!mine.length) throw new Error('ไม่พบใบหน้าในภาพ กรุณาใช้ภาพหน้าตรงที่ชัดขึ้น');
+    const me = mine[0];
+    faceProgress('กำลังโหลดดัชนีใบหน้าของอัลบั้ม...', 20);
+    const data = await call('getFaceData', curAlbum.id, TOKEN);
+    const miss = data.imageIds.filter(id => !data.index[id]).length;
+    if (miss) await indexMissing(curAlbum.id, data, (d, t) => faceProgress(`กำลังสแกนภาพในอัลบั้ม ${d}/${t} ภาพ...`, 20 + d / t * 75), !!USER);
+    faceProgress('กำลังเปรียบเทียบใบหน้า...', 97);
+    myMatches = {};
+    Object.entries(data.index).forEach(([id, faces]) => {
+      let best = 9; (faces || []).forEach(fd => { const d = faceapi.euclideanDistance(me, fd); if (d < best) best = d; });
+      if (best < FACE_THRESHOLD) myMatches[id] = best;
+    });
+    const n = Object.keys(myMatches).length;
+    faceProgress(n ? `✅ พบภาพของคุณ <b class="text-[#ff7a1a]">${n}</b> ภาพ` : '😕 ไม่พบภาพที่ตรงกับใบหน้าของคุณ ลองใช้ภาพเซลฟี่อื่นที่ชัดกว่านี้', 100);
+    if (n) {
+      byId('fMine').classList.remove('hide'); byId('fMine').textContent = `🙋 ภาพของฉัน (${n})`;
+      byId('modalBox').insertAdjacentHTML('beforeend', `<button class="btn btn-p w-full mt-2" onclick="closeModal();setFilter('mine');byId('fileGrid').scrollIntoView({behavior:'smooth'})">👀 ดูภาพของฉัน ${n} ภาพ</button>`);
+    } else {
+      byId('modalBox').insertAdjacentHTML('beforeend', `<button class="btn btn-p w-full mt-2" onclick="faceSearchUI()">🔄 ลองใหม่อีกครั้ง</button>`);
+    }
+  } catch(e){ faceProgress(`<span class="text-red-400">❌ ${esc(e.message)}</span>`); byId('modalBox').insertAdjacentHTML('beforeend', `<button class="btn btn-p w-full mt-2" onclick="faceSearchUI()">🔄 ลองใหม่</button>`); }
+}
+
+/** แอดมิน: สร้างดัชนีใบหน้าล่วงหน้า ผู้ใช้จะค้นหาได้ทันที */
+async function buildFaceIndexUI(albumId){
+  const a = adminAlbums.find(x => x.id === albumId);
+  openModal(`<h3 class="font-bold text-lg mb-1">🙂 สร้างดัชนีใบหน้า</h3><p class="text-sm text-[#8b93a7] mb-3">${esc(a ? a.name : '')}</p>
+    <p id="fsMsg" class="text-sm text-[#8b93a7] mb-3">กำลังเตรียม...</p>
+    <div class="w-full bg-[#1b202b] rounded-full h-2.5 overflow-hidden"><div id="fsBar" class="h-2.5 bg-gradient-to-r from-[#ff7a1a] to-[#ff9a3d] transition-all" style="width:3%"></div></div>
+    <p class="text-[11px] text-[#8b93a7] mt-3">ทำครั้งเดียวหลังอัปโหลดภาพเสร็จ (ภาพที่อัปโหลดเพิ่มภายหลังจะสแกนเฉพาะภาพใหม่) — อย่าปิดหน้านี้ระหว่างทำงาน</p>`);
+  try {
+    faceProgress('กำลังโหลด AI...', 5); await loadFaceApi();
+    const data = await call('getFaceData', albumId, TOKEN);
+    const miss = data.imageIds.filter(id => !data.index[id]).length;
+    if (!miss) faceProgress(`✅ ดัชนีครบแล้ว (${data.imageIds.length} ภาพ)`, 100);
+    else { await indexMissing(albumId, data, (d, t) => faceProgress(`กำลังสแกน ${d}/${t} ภาพ...`, 5 + d / t * 95), true); faceProgress(`✅ สร้างดัชนีเสร็จแล้ว ${data.imageIds.length} ภาพ`, 100); }
+  } catch(e){ faceProgress(`<span class="text-red-400">❌ ${esc(e.message)}</span>`); }
+  byId('modalBox').insertAdjacentHTML('beforeend','<button class="btn btn-p w-full mt-4" onclick="closeModal()">ปิด</button>');
 }
 
 // ===== LIGHTBOX =====
@@ -482,6 +594,7 @@ function renderAlbumRows(){
     <td class="text-right whitespace-nowrap">
       <button class="btn btn-g text-xs px-2" onclick="openAlbumAdmin('${a.id}')" title="ดูอัลบั้ม">👁</button>
       <button class="btn btn-g text-xs px-2" onclick="openQRId('${a.id}')" title="QR">▣</button>
+      <button class="btn btn-g text-xs px-2" onclick="buildFaceIndexUI('${a.id}')" title="สร้างดัชนีใบหน้า">🙂</button>
       <button class="btn btn-g text-xs px-2" onclick="albumForm('${a.id}')" title="แก้ไข">✏️</button>
       <button class="btn btn-d text-xs px-2" onclick="delAlbum('${a.id}')" title="ลบ">🗑</button></td></tr>`).join('') || '<tr><td colspan="5" class="text-center text-[#8b93a7] py-8">ยังไม่มีอัลบั้ม</td></tr>';
 }

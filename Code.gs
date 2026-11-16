@@ -334,3 +334,56 @@ function getFileData(fileId, token) {
   if (f.getSize() > ZIP_PART_LIMIT) return { tooBig: true, url: 'https://drive.google.com/uc?export=download&id=' + fileId, name: f.getName() };
   return { name: f.getName(), mime: f.getMimeType(), base64: Utilities.base64Encode(f.getBlob().getBytes()) };
 }
+
+// ====== FACE SEARCH (ค้นหาภาพของฉันด้วยใบหน้า) ======
+// ประมวลผลใบหน้าในเบราว์เซอร์ (face-api.js) — ภาพเซลฟี่ของผู้ใช้ไม่ถูกส่งหรือบันทึกที่เซิร์ฟเวอร์
+// เซิร์ฟเวอร์เก็บเฉพาะ "ดัชนีใบหน้า" (ตัวเลข 128 ค่า/ใบหน้า) ของภาพในอัลบั้ม ไว้ในไฟล์ _faces.json ในโฟลเดอร์อัลบั้ม
+const FACE_FILE = '_faces.json';
+
+function faceFile_(folderId) {
+  const it = DriveApp.getFolderById(folderId).getFilesByName(FACE_FILE);
+  return it.hasNext() ? it.next() : null;
+}
+
+function getFaceData(albumId, token) {
+  const data = getAlbumFiles(albumId, token); // ตรวจสิทธิ์/การมองเห็นอัลบั้มแล้ว
+  const f = faceFile_(data.album.folderId);
+  let index = {};
+  if (f) { try { index = JSON.parse(f.getBlob().getDataAsString()); } catch (e) {} }
+  const imageIds = data.files.filter(x => x.type === 'image').map(x => x.id);
+  Object.keys(index).forEach(k => { if (imageIds.indexOf(k) < 0) delete index[k]; });
+  return { index, imageIds };
+}
+
+/** ดึงภาพย่อ (กว้าง ~1000px) เป็น Base64 เพื่อให้เบราว์เซอร์ตรวจจับใบหน้าได้ */
+function getFaceThumbs(albumId, ids, token) {
+  const data = getAlbumFiles(albumId, token);
+  const allowed = {}; data.files.forEach(x => allowed[x.id] = 1);
+  const oauth = ScriptApp.getOAuthToken();
+  return ids.filter(id => allowed[id]).map(id => {
+    try {
+      const r = UrlFetchApp.fetch('https://drive.google.com/thumbnail?id=' + id + '&sz=w1000',
+        { headers: { Authorization: 'Bearer ' + oauth }, muteHttpExceptions: true, followRedirects: true });
+      if (r.getResponseCode() !== 200) throw new Error();
+      return { id, data: 'data:image/jpeg;base64,' + Utilities.base64Encode(r.getContent()) };
+    } catch (e) {
+      const b = DriveApp.getFileById(id).getThumbnail();
+      return { id, data: b ? 'data:image/png;base64,' + Utilities.base64Encode(b.getBytes()) : '' };
+    }
+  });
+}
+
+/** ทีมงาน/แอดมิน บันทึกดัชนีใบหน้า (เพื่อให้ผู้ใช้ค้นหาได้เร็ว ไม่ต้องสแกนใหม่ทุกครั้ง) */
+function saveFaceIndex(token, albumId, partial) {
+  auth_(token);
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const a = rows_(SHEET_ALBUMS).find(x => x.id === albumId); if (!a) throw new Error('ไม่พบอัลบั้ม');
+    let f = faceFile_(a.folderId), index = {};
+    if (f) { try { index = JSON.parse(f.getBlob().getDataAsString()); } catch (e) {} }
+    Object.assign(index, partial || {});
+    const json = JSON.stringify(index);
+    if (f) f.setContent(json); else DriveApp.getFolderById(a.folderId).createFile(FACE_FILE, json, 'application/json');
+    return Object.keys(index).length;
+  } finally { lock.releaseLock(); }
+}
