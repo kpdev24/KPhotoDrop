@@ -173,7 +173,13 @@
 const APP_URL_PARAM = '<?= albumParam ?>';
 // ลิงก์สาธารณะที่ใช้ใน QR Code และการแชร์ (เว้นว่าง '' เพื่อใช้ลิงก์ Google Apps Script)
 const PUBLIC_BASE = 'https://kpdev24.github.io/KPhotoDrop/';
-let WEB_URL = '', TOKEN = sessionStorage.getItem('pd_token') || '', USER = JSON.parse(sessionStorage.getItem('pd_user') || 'null');
+// ที่เก็บข้อมูลแบบปลอดภัย: บางเบราว์เซอร์บล็อก sessionStorage เมื่อเว็บถูกฝัง (iframe) → ใช้หน่วยความจำแทน
+const store = (() => { const mem = {}; let ss = null; try { ss = window.sessionStorage; ss.setItem('_t','1'); ss.removeItem('_t'); } catch(e){ ss = null; }
+  return { get:k => { try { return ss ? ss.getItem(k) : (mem[k] ?? null); } catch(e){ return mem[k] ?? null; } },
+           set:(k,v) => { mem[k] = v; try { ss && ss.setItem(k,v); } catch(e){} },
+           clear:() => { Object.keys(mem).forEach(k => delete mem[k]); try { ss && ss.clear(); } catch(e){} } }; })();
+let WEB_URL = '', TOKEN = store.get('pd_token') || '', USER = null;
+try { USER = JSON.parse(store.get('pd_user') || 'null'); } catch(e){ USER = null; }
 let albums = [], curAlbum = null, files = [], view = [], filter = 'all', lbIdx = 0, adminAlbums = [];
 
 const byId = id => document.getElementById(id);
@@ -193,6 +199,7 @@ function closeModal(){ byId('modal').classList.add('hide'); }
 function show(v){ ['vHome','vAlbum','vAdmin'].forEach(x => byId(x).classList.toggle('hide', x!==v)); window.scrollTo(0,0); }
 const loader = '<div class="col-span-full flex justify-center py-16"><div class="spin"></div></div>';
 
+function safeHistory(a,b,c){ try { history.replaceState(a,b,c); } catch(e){} }
 // ===== INIT =====
 (async function init(){
   renderHeader();
@@ -209,7 +216,7 @@ function renderHeader(){
 }
 
 // ===== PUBLIC =====
-function goHome(){ show('vHome'); history.replaceState(null,'','?'); if(!albums.length) loadAlbums(); else renderAlbums(); }
+function goHome(){ show('vHome'); safeHistory(null,'','?'); if(!albums.length) loadAlbums(); else renderAlbums(); }
 async function loadAlbums(){
   show('vHome'); byId('albumGrid').innerHTML = loader;
   try { albums = await call('getPublicAlbums'); renderAlbums(); } catch(e){ byId('albumGrid').innerHTML = `<p class="col-span-full text-center text-red-500">${esc(e.message)}</p>`; }
@@ -232,7 +239,7 @@ async function openAlbum(id){
   try {
     const d = await call('getAlbumFiles', id, TOKEN);
     curAlbum = d.album; files = d.files; filter = 'all'; myMatches = {}; byId('fMine').classList.add('hide');
-    history.replaceState(null,'','?album='+id);
+    safeHistory(null,'','?album='+id);
     byId('aName').textContent = curAlbum.name; byId('aDesc').textContent = curAlbum.description || '';
     const total = files.reduce((s,f)=>s+f.size,0);
     byId('aMeta').textContent = `${files.filter(f=>f.type==='image').length} ภาพ • ${files.filter(f=>f.type==='video').length} วิดีโอ • รวม ${fmtSize(total)}`;
@@ -514,17 +521,17 @@ async function doLogin(){
   b.disabled = true; b.textContent = 'กำลังตรวจสอบ...'; byId('lErr').textContent='';
   try {
     const r = await call('login', byId('lUser').value, byId('lPass').value, role);
-    TOKEN = r.token; USER = r.user; sessionStorage.setItem('pd_token',TOKEN); sessionStorage.setItem('pd_user',JSON.stringify(USER));
+    TOKEN = r.token; USER = r.user; store.set('pd_token',TOKEN); store.set('pd_user',JSON.stringify(USER));
     closeModal(); renderHeader(); toast('ยินดีต้อนรับ ' + USER.name); openAdmin();
   } catch(e){ byId('lErr').textContent = e.message; b.disabled=false; b.textContent='เข้าสู่ระบบ'; }
 }
-function doLogout(){ call('logout', TOKEN); TOKEN=''; USER=null; sessionStorage.clear(); renderHeader(); goHome(); toast('ออกจากระบบแล้ว','info'); }
+function doLogout(){ call('logout', TOKEN); TOKEN=''; USER=null; store.clear(); renderHeader(); goHome(); toast('ออกจากระบบแล้ว','info'); }
 function authErr(e){ toast(e.message,'err'); if(/เซสชัน|ระงับ/.test(e.message)) doLogout(); }
 
 // ===== ADMIN =====
 async function openAdmin(){
   if(!USER) return loginForm();
-  show('vAdmin'); history.replaceState(null,'','?');
+  show('vAdmin'); safeHistory(null,'','?');
   const isA = USER.role==='admin';
   document.querySelectorAll('.admin-only').forEach(x=>x.classList.toggle('hide',!isA));
   document.querySelectorAll('.staff-only').forEach(x=>x.classList.toggle('hide',isA));
