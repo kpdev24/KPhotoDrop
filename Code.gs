@@ -99,6 +99,27 @@ function setSetting_(k, v) {
 }
 function fmtDate_(d) { return d instanceof Date ? Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM-dd') : String(d || ''); }
 function isMedia_(m) { return /^image\/|^video\//.test(m); }
+// ====== CACHE (ทำให้เว็บโหลดเร็ว: ไม่ต้องสแกน Google Drive ทุกครั้ง) ======
+const CACHE_SEC = 300; // 5 นาที — ไฟล์ที่เพิ่มผ่านระบบจะล้างแคชทันที
+function cacheGet_(k) { try { const v = CacheService.getScriptCache().get(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+function cachePut_(k, v) { try { const s = JSON.stringify(v); if (s.length < 95000) CacheService.getScriptCache().put(k, s, CACHE_SEC); } catch (e) {} }
+function invalidate_(folderId) { try { CacheService.getScriptCache().removeAll(['pub_albums', 'fl_' + folderId]); } catch (e) {} }
+/** รายการไฟล์แบบย่อของอัลบั้ม (เก็บแคช) — fresh=true อ่านจาก Drive ใหม่ */
+function listFilesLite_(folderId, fresh) {
+  const key = 'fl_' + folderId;
+  if (!fresh) { const c = cacheGet_(key); if (c) return c; }
+  const list = collectFiles_(folderId).map(x => ({ id: x.f.getId(), name: x.f.getName(), mime: x.f.getMimeType(), cat: x.cat, size: x.f.getSize(), created: x.f.getDateCreated().getTime() }));
+  cachePut_(key, list);
+  return list;
+}
+function liteOut_(x) {
+  const id = x.id;
+  return { id, name: x.name, mime: x.mime, type: x.mime.indexOf('video') === 0 ? 'video' : 'image', category: x.cat, size: x.size, created: x.created,
+    thumb: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w400',
+    view: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+    preview: 'https://drive.google.com/file/d/' + id + '/preview',
+    download: 'https://drive.google.com/uc?export=download&id=' + id };
+}
 function publicUrl_() { return getSetting_('publicUrl') || DEFAULT_PUBLIC_URL; }
 
 // ====== AUTH ======
@@ -187,21 +208,25 @@ function albumOut_(a, withCount) {
     startDate: fmtDate_(a.startDate), endDate: fmtDate_(a.endDate), createdAt: fmtDate_(a.createdAt), locked: !!a.passwordHash };
   if (withCount) {
     try {
-      const fs = collectFiles_(a.folderId); o.count = fs.length;
-      const c = fs.find(x => x.f.getMimeType().indexOf('image') === 0);
-      o.cover = (c && !a.passwordHash) ? c.f.getId() : ''; // อัลบั้มล็อกไม่แสดงภาพปก
+      const fs = listFilesLite_(a.folderId, withCount === 'fresh'); o.count = fs.length;
+      const c = fs.find(x => x.mime.indexOf('image') === 0);
+      o.cover = (c && !a.passwordHash) ? c.id : ''; // อัลบั้มล็อกไม่แสดงภาพปก
     } catch (e) { o.count = 0; o.cover = ''; }
   }
   return o;
 }
 function getPublicAlbums() {
+  const c = cacheGet_('pub_albums');
+  if (c && c.day === fmtDate_(new Date())) return c.list;
   setupSheets_();
-  return rows_(SHEET_ALBUMS).filter(isAlbumVisible_).reverse().map(a => albumOut_(a, true));
+  const list = rows_(SHEET_ALBUMS).filter(isAlbumVisible_).reverse().map(a => albumOut_(a, true));
+  cachePut_('pub_albums', { day: fmtDate_(new Date()), list });
+  return list;
 }
 function getAlbumFiles(albumId, token, pass) {
   const a = findAlbum_(albumId);
   checkAlbumAccess_(a, token, pass);
-  const files = collectFiles_(a.folderId).map(x => fileOut_(x.f, x.cat)).sort((x, y) => y.created - x.created);
+  const files = listFilesLite_(a.folderId, isStaff_(token)).map(liteOut_).sort((x, y) => y.created - x.created); // ทีมงานเห็นข้อมูลล่าสุดเสมอ
   const cats = [DEFAULT_CATEGORY].concat(listCategories_(a.folderId)).filter(c => files.some(f => f.category === c));
   return { album: albumOut_(a, false), files, categories: cats };
 }
@@ -298,7 +323,7 @@ function getFileData(fileId, token, pass, mode) {
 }
 
 // ====== ALBUMS (ADMIN) ======
-function adminGetAlbums(token) { auth_(token); return rows_(SHEET_ALBUMS).reverse().map(a => albumOut_(a, true)); }
+function adminGetAlbums(token) { auth_(token); return rows_(SHEET_ALBUMS).reverse().map(a => albumOut_(a, 'fresh')); }
 
 function saveAlbum(token, data) {
   const s = auth_(token, true);
@@ -311,7 +336,7 @@ function saveAlbum(token, data) {
     if (data.removePassword) a.passwordHash = '';
     else if (data.password) a.passwordHash = hash_(data.password);
     try { if (getSetting_('autoSubfolder') === 'true') DriveApp.getFolderById(a.folderId).setName(data.name); } catch (e) {}
-    writeRow_(SHEET_ALBUMS, a._row, a);
+    writeRow_(SHEET_ALBUMS, a._row, a); invalidate_(a.folderId);
     return albumOut_(a, false);
   }
   const root = getRoot_();
@@ -319,20 +344,20 @@ function saveAlbum(token, data) {
   const a = { id: uid_(), name: data.name, description: data.description || '', folderId, status: data.status || 'Active',
     startDate: data.startDate || '', endDate: data.endDate || '', createdAt: new Date(), createdBy: s.username,
     passwordHash: data.password ? hash_(data.password) : '' };
-  appendObj_(SHEET_ALBUMS, a);
+  appendObj_(SHEET_ALBUMS, a); invalidate_(folderId);
   return albumOut_(a, false);
 }
 function toggleAlbum(token, id) {
   auth_(token, true);
   const a = findAlbum_(id);
   a.status = a.status === 'Active' ? 'Hidden' : 'Active';
-  writeRow_(SHEET_ALBUMS, a._row, a); return a.status;
+  writeRow_(SHEET_ALBUMS, a._row, a); invalidate_(a.folderId); return a.status;
 }
 function deleteAlbum(token, id, deleteFolder) {
   auth_(token, true);
   const a = findAlbum_(id);
   if (deleteFolder && a.folderId !== getSetting_('rootFolderId')) { try { DriveApp.getFolderById(a.folderId).setTrashed(true); } catch (e) {} }
-  sheet_(SHEET_ALBUMS).deleteRow(a._row);
+  sheet_(SHEET_ALBUMS).deleteRow(a._row); invalidate_(a.folderId);
   return true;
 }
 
@@ -353,7 +378,7 @@ function renameCategory(token, albumId, oldName, newName) {
   if (!newName || /[\\/]/.test(newName)) throw new Error('ชื่อหมวดไม่ถูกต้อง');
   const it = DriveApp.getFolderById(findAlbum_(albumId).folderId).getFoldersByName(oldName);
   if (!it.hasNext()) throw new Error('ไม่พบหมวด');
-  it.next().setName(newName); return listCategories_(findAlbum_(albumId).folderId);
+  it.next().setName(newName); invalidate_(findAlbum_(albumId).folderId); return listCategories_(findAlbum_(albumId).folderId);
 }
 /** ลบหมวด: ย้ายไฟล์ในหมวดกลับไปหมวด "ทั่วไป" แล้วลบโฟลเดอร์ (ไฟล์ไม่หาย) */
 function deleteCategory(token, albumId, name) {
@@ -363,13 +388,13 @@ function deleteCategory(token, albumId, name) {
   if (!it.hasNext()) throw new Error('ไม่พบหมวด');
   const sub = it.next(), files = sub.getFiles();
   while (files.hasNext()) files.next().moveTo(root);
-  sub.setTrashed(true);
+  sub.setTrashed(true); invalidate_(a.folderId);
   return listCategories_(a.folderId);
 }
 function moveFileToCategory(token, albumId, fileId, name) {
   auth_(token);
-  const target = getOrCreateCategory_(findAlbum_(albumId), name);
-  DriveApp.getFileById(fileId).moveTo(target); return true;
+  const a = findAlbum_(albumId), target = getOrCreateCategory_(a, name);
+  DriveApp.getFileById(fileId).moveTo(target); invalidate_(a.folderId); return true;
 }
 
 // ====== UPLOAD / DELETE FILES (STAFF+) ======
@@ -380,9 +405,40 @@ function uploadFile(token, albumId, name, mime, base64, category) {
   const blob = Utilities.newBlob(Utilities.base64Decode(base64), mime, name); // ไฟล์จริง ไม่บีบอัด
   const f = getOrCreateCategory_(a, category).createFile(blob);
   try { f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+  invalidate_(a.folderId);
   return { id: f.getId(), name: f.getName() };
 }
-function deleteFile(token, fileId) { auth_(token); DriveApp.getFileById(fileId).setTrashed(true); return true; }
+function deleteFile(token, fileId) {
+  auth_(token);
+  const f = DriveApp.getFileById(fileId), a = albumOfFile_(f);
+  f.setTrashed(true); if (a) invalidate_(a.folderId); return true;
+}
+
+// ====== DIRECT UPLOAD (อัปโหลดตรงเข้า Google Drive — ไม่จำกัด 45MB, รองรับวิดีโอไฟล์ใหญ่) ======
+/** สร้าง Resumable Upload Session ให้เบราว์เซอร์ส่งไฟล์ตรงเข้า Drive (ไม่ผ่าน Apps Script) */
+function createUploadSession(token, albumId, name, mime, size, category, origin) {
+  auth_(token);
+  if (!/^(image\/(jpeg|png|heic|heif|webp)|video\/(mp4|quicktime|x-m4v|webm))$/.test(mime)) throw new Error('รองรับเฉพาะภาพ JPG/PNG/HEIC/WEBP และวิดีโอ MP4/MOV/M4V/WEBM');
+  const a = findAlbum_(albumId), folder = getOrCreateCategory_(a, category);
+  const headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken(), 'X-Upload-Content-Type': mime, 'X-Upload-Content-Length': String(size) };
+  if (origin) headers.Origin = origin; // ให้ Google อนุญาต CORS กับหน้าเว็บที่อัปโหลด
+  const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&supportsAllDrives=true&fields=id,name';
+  const opt = h => ({ method: 'post', contentType: 'application/json; charset=UTF-8', headers: h,
+    payload: JSON.stringify({ name, mimeType: mime, parents: [folder.getId()] }), muteHttpExceptions: true });
+  let r;
+  try { r = UrlFetchApp.fetch(url, opt(headers)); }
+  catch (e) { delete headers.Origin; r = UrlFetchApp.fetch(url, opt(headers)); } // บางระบบไม่อนุญาตส่ง Origin
+  const loc = r.getHeaders()['Location'] || r.getHeaders()['location'];
+  if (r.getResponseCode() !== 200 || !loc) throw new Error('สร้างการอัปโหลดไม่สำเร็จ (' + r.getResponseCode() + ')');
+  return loc;
+}
+/** หลังเบราว์เซอร์อัปโหลดเสร็จ: ตั้งสิทธิ์ให้ดาวน์โหลดได้ + ล้างแคช */
+function finalizeUpload(token, albumId, fileId) {
+  auth_(token);
+  const a = findAlbum_(albumId);
+  try { DriveApp.getFileById(fileId).setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) {}
+  invalidate_(a.folderId); return true;
+}
 
 // ====== USERS (ADMIN) ======
 function getUsers(token) {

@@ -96,14 +96,14 @@
 
     <!-- upload -->
     <div id="tUpload" class="atp card p-4 sm:p-6">
-      <h3 class="font-bold text-lg mb-4">อัปโหลดไฟล์จริงขึ้น Google Drive (ไม่บีบอัด)</h3>
+      <h3 class="font-bold text-lg mb-1">อัปโหลดไฟล์จริงขึ้น Google Drive (ไม่บีบอัด)</h3><p class="text-xs text-[#9a917f] mb-4">อัปโหลดตรงเข้า Drive พร้อมกัน 3 ไฟล์ • วิดีโอไฟล์ใหญ่ได้ • อย่าปิดหน้านี้จนกว่าจะเสร็จ</p>
       <div class="grid sm:grid-cols-2 gap-3 mb-3">
         <div><label class="text-sm text-[#9a917f]">เลือกอัลบั้ม</label><select id="upAlbum" class="inp" onchange="loadManageFiles()"></select></div>
         <div><label class="text-sm text-[#9a917f]">📂 หมวดภาพ</label>
           <select id="upCat" class="inp" onchange="byId('upCatNew').classList.toggle('hide', this.value!=='__new')"></select>
           <input id="upCatNew" class="inp mt-2 hide" placeholder="ชื่อหมวดใหม่ เช่น พิธีเปิด, ภาพหมู่, การแข่งขัน"></div>
-        <div class="sm:col-span-2"><label class="text-sm text-[#9a917f]">ไฟล์ (JPG, PNG, MP4, MOV — เลือกได้หลายไฟล์)</label>
-          <input id="upFiles" type="file" multiple accept=".jpg,.jpeg,.png,.mp4,.mov,image/jpeg,image/png,video/mp4,video/quicktime" class="inp"></div>
+        <div class="sm:col-span-2"><label class="text-sm text-[#9a917f]">📁 ภาพและวิดีโอ — เลือกได้หลายไฟล์พร้อมกัน (JPG, PNG, HEIC, MP4, MOV) ไม่จำกัดขนาด</label>
+          <input id="upFiles" type="file" multiple accept="image/*,video/*,.heic,.heif,.mov,.m4v" class="inp"></div>
       </div>
       <button class="btn btn-p w-full sm:w-auto" onclick="doUpload()">🚀 เริ่มอัปโหลด</button>
       <div id="upProg" class="mt-4 space-y-2"></div>
@@ -310,7 +310,7 @@ function setFilter(f){
   if (catFilter) view = view.filter(x => x.category === catFilter);
   byId('fileGrid').innerHTML = view.length ? view.map((x,i) => `
     <div class="tile" onclick="openLB(${i})">
-      <img src="${x.thumb}" loading="lazy" onerror="this.style.display='none'">
+      <img src="${x.thumb}" loading="lazy" decoding="async" onerror="this.style.display='none'">
       ${x.type==='video'?'<div class="absolute inset-0 flex items-center justify-center"><span class="bg-black/50 text-white rounded-full w-12 h-12 flex items-center justify-center text-xl">▶</span></div>':''}
       <button onclick="event.stopPropagation();dlMenu(view[${i}])" class="absolute bottom-1.5 right-1.5 bg-[#0a0a0a]/90 hover:bg-[#c9a24d] rounded-lg px-2 py-1 text-xs shadow">⬇️</button>
     </div>`).join('') : '<p class="col-span-full text-center text-[#9a917f] py-16">ไม่มีไฟล์ในหมวดนี้</p>';
@@ -653,27 +653,65 @@ async function refreshAdminAlbums(){
 }
 
 // upload
+// ===== UPLOAD: ส่งตรงเข้า Google Drive พร้อมกัน 3 ไฟล์ (ไม่จำกัด 45MB) =====
+const UP_CONCURRENCY = 3;
+const OK_EXT = /\.(jpe?g|png|heic|heif|webp|mp4|mov|m4v|webm)$/i;
+function guessMime(f){
+  if (f.type) return f.type === 'image/jpg' ? 'image/jpeg' : f.type;
+  const e = (f.name.split('.').pop() || '').toLowerCase();
+  return ({jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',heic:'image/heic',heif:'image/heif',webp:'image/webp',mp4:'video/mp4',mov:'video/quicktime',m4v:'video/x-m4v',webm:'video/webm'})[e] || 'application/octet-stream';
+}
+function putToDrive(url, file, mime, onProg){
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest(); x.open('PUT', url, true); x.setRequestHeader('Content-Type', mime);
+    x.upload.onprogress = e => e.lengthComputable && onProg(e.loaded / e.total);
+    x.onload = () => { if (x.status === 200 || x.status === 201) { try { res(JSON.parse(x.responseText)); } catch(e){ rej(new Error('อ่านผลการอัปโหลดไม่ได้')); } } else rej(new Error('Drive ตอบกลับ ' + x.status)); };
+    x.onerror = () => rej(new Error('CORS/NETWORK'));
+    x.send(file);
+  });
+}
+async function uploadOne(f, albumId, cat, row){
+  const mime = guessMime(f), bar = row.querySelector('.ub'), st = row.querySelector('.us');
+  const prog = p => { bar.style.width = Math.round(p * 100) + '%'; st.textContent = Math.round(p * 100) + '%'; };
+  try {
+    // 1) ส่งตรงเข้า Drive (เร็ว ไม่จำกัดขนาด)
+    const url = await call('createUploadSession', TOKEN, albumId, f.name, mime, f.size, cat, location.origin);
+    const r = await putToDrive(url, f, mime, prog);
+    await call('finalizeUpload', TOKEN, albumId, r.id);
+  } catch(e) {
+    // 2) สำรอง: ส่งผ่าน Apps Script (ไฟล์ไม่เกิน 45MB)
+    if (f.size > 45 * 1024 * 1024) throw new Error('อัปโหลดตรงไม่สำเร็จ และไฟล์ใหญ่เกิน 45MB — ' + e.message);
+    st.textContent = 'สำรอง...';
+    const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result.split(',')[1]); r.onerror = rej; r.readAsDataURL(f); });
+    await call('uploadFile', TOKEN, albumId, f.name, /^image\/(jpeg|png)$|^video\/(mp4|quicktime)$/.test(mime) ? mime : (mime.indexOf('video')===0 ? 'video/mp4' : 'image/jpeg'), b64, cat);
+    prog(1);
+  }
+}
 async function doUpload(){
   const albumId = byId('upAlbum').value, fl = [...byId('upFiles').files];
   if(!albumId) return toast('กรุณาเลือกอัลบั้ม','err');
   if(!fl.length) return toast('กรุณาเลือกไฟล์','err');
-  const ok = /\.(jpe?g|png|mp4|mov)$/i;
   let cat = byId('upCat').value; if (cat === '__new') { cat = byId('upCatNew').value.trim(); if (!cat) return toast('กรุณาตั้งชื่อหมวดใหม่','err'); }
-  const box = byId('upProg'); box.innerHTML = fl.map((f,i)=>`<div class="flex items-center gap-2 text-sm"><span id="up${i}" class="w-6 text-center">⏳</span><span class="truncate flex-1 min-w-0">${esc(f.name)}</span><span class="text-[#9a917f] shrink-0">${fmtSize(f.size)}</span></div>`).join('');
-  let done=0;
-  for (let i=0;i<fl.length;i++){
-    const f = fl[i], st = byId('up'+i);
-    if(!ok.test(f.name)){ st.textContent='⛔'; continue; }
-    if(f.size > 45*1024*1024){ st.textContent='⚠️'; st.title='ไฟล์เกิน 45MB'; continue; }
-    st.innerHTML='<div class="spin mx-auto" style="width:16px;height:16px"></div>';
-    try {
-      const b64 = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(f); });
-      let mime = f.type || (/\.mov$/i.test(f.name)?'video/quicktime':/\.mp4$/i.test(f.name)?'video/mp4':/\.png$/i.test(f.name)?'image/png':'image/jpeg');
-      if(mime==='image/jpg') mime='image/jpeg';
-      await call('uploadFile', TOKEN, albumId, f.name, mime, b64, cat); st.textContent='✅'; done++;
-    } catch(e){ st.textContent='❌'; st.title=e.message; }
-  }
-  toast(`อัปโหลดสำเร็จ ${done}/${fl.length} ไฟล์`); byId('upFiles').value=''; byId('upCatNew').value=''; loadManageFiles();
+  const totalSize = fl.reduce((s, f) => s + f.size, 0);
+  const box = byId('upProg');
+  box.innerHTML = `<div class="text-sm text-[#9a917f] mb-1" id="upSum">กำลังอัปโหลด 0/${fl.length} ไฟล์ (${fmtSize(totalSize)}) — พร้อมกัน ${UP_CONCURRENCY} ไฟล์</div>` +
+    fl.map((f,i)=>`<div id="up${i}" class="card px-3 py-2"><div class="flex items-center gap-2 text-sm"><span>${/^video|\.(mp4|mov|m4v|webm)$/i.test(f.type||f.name)?'🎬':'🖼️'}</span><span class="truncate flex-1 min-w-0">${esc(f.name)}</span><span class="text-[#9a917f] shrink-0 text-xs">${fmtSize(f.size)}</span><span class="us w-14 text-right shrink-0 text-xs">รอคิว</span></div>
+      <div class="h-1.5 bg-[#0a0a0a] rounded-full mt-1.5 overflow-hidden"><div class="ub h-1.5 bar transition-all" style="width:0"></div></div></div>`).join('');
+  const btn = document.querySelector('[onclick="doUpload()"]'); if (btn) btn.disabled = true;
+  let done = 0, fail = 0, next = 0;
+  const worker = async () => {
+    while (next < fl.length) {
+      const i = next++, f = fl[i], row = byId('up'+i), st = row.querySelector('.us');
+      if (!OK_EXT.test(f.name)) { st.textContent = '⛔ ไม่รองรับ'; fail++; continue; }
+      st.textContent = '0%';
+      try { await uploadOne(f, albumId, cat, row); st.textContent = '✅'; done++; }
+      catch(e){ st.textContent = '❌'; st.title = e.message; row.title = e.message; fail++; }
+      byId('upSum').textContent = `อัปโหลดแล้ว ${done}/${fl.length} ไฟล์` + (fail ? ` • ไม่สำเร็จ ${fail}` : '');
+    }
+  };
+  await Promise.all(Array.from({length: Math.min(UP_CONCURRENCY, fl.length)}, worker));
+  if (btn) btn.disabled = false;
+  toast(`อัปโหลดสำเร็จ ${done}/${fl.length} ไฟล์`, fail ? 'err' : 'ok'); byId('upFiles').value=''; byId('upCatNew').value=''; loadManageFiles();
   if (done) call('notifyNewPhotos', TOKEN, albumId, done).then(ok => { if (ok) toast(`อัปโหลดสำเร็จ ${done} ไฟล์ • แจ้งเตือน LINE แล้ว ✅`); }).catch(()=>{});
 }
 let manageCats = [];
