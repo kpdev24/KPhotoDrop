@@ -103,7 +103,7 @@
           <select id="upCat" class="inp" onchange="byId('upCatNew').classList.toggle('hide', this.value!=='__new')"></select>
           <input id="upCatNew" class="inp mt-2 hide" placeholder="ชื่อหมวดใหม่ เช่น พิธีเปิด, ภาพหมู่, การแข่งขัน"></div>
         <div class="sm:col-span-2"><label class="text-sm text-[#9a917f]">📁 ภาพและวิดีโอ — เลือกได้หลายไฟล์พร้อมกัน (JPG, PNG, HEIC, MP4, MOV) ไม่จำกัดขนาด</label>
-          <input id="upFiles" type="file" multiple accept="image/*,video/*,.heic,.heif,.mov,.m4v" class="inp"></div>
+          <input id="upFiles" type="file" multiple accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.m4v,.webm,image/jpeg,image/png,image/heic,video/mp4,video/quicktime" class="inp"></div>
       </div>
       <button class="btn btn-p w-full sm:w-auto" onclick="doUpload()">🚀 เริ่มอัปโหลด</button>
       <div id="upProg" class="mt-4 space-y-2"></div>
@@ -389,7 +389,7 @@ function dlMenu(f){
       <div class="font-semibold text-[#c9a24d]">📱 ขนาดโซเชียล 2048px</div><div class="text-xs text-[#9a917f]">ไฟล์เล็ก โหลดไว — โพสต์ Facebook / LINE / IG ภาพไม่แตก</div></button>
     <button class="btn btn-g w-full mt-3" onclick="closeModal()">ยกเลิก</button>`);
 }
-/** ย่อภาพให้ด้านยาวสุด 2048px (JPG 90%) ในเบราว์เซอร์ — ย่อทีละครึ่งเพื่อให้ภาพคม */
+// ย่อภาพให้ด้านยาวสุด 2048px (JPG 90%) ในเบราว์เซอร์ — ย่อทีละครึ่งเพื่อให้ภาพคม
 async function toSocial(blob, name){
   const MAX = 2048, url = URL.createObjectURL(blob);
   try {
@@ -459,7 +459,7 @@ async function descriptorsOf(src, maxFaces){
 }
 function faceProgress(msg, pct){ const m = byId('fsMsg'), b = byId('fsBar'); if (m) m.innerHTML = msg; if (b && pct !== undefined) b.style.width = pct + '%'; }
 
-/** สแกนภาพที่ยังไม่มีดัชนี (ดึงทีละ 6 ภาพ) */
+// สแกนภาพที่ยังไม่มีดัชนี (ดึงทีละ 6 ภาพ)
 async function indexMissing(albumId, data, onProgress, save){
   const missing = data.imageIds.filter(id => !data.index[id]);
   let done = 0;
@@ -482,7 +482,7 @@ function faceSearchUI(){
     <label id="fsPick" class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-[#2e2a22] hover:border-[#c9a24d] rounded-2xl p-6 cursor-pointer text-center">
       <span class="text-4xl">🤳</span><span class="font-medium">แตะเพื่อถ่าย / เลือกภาพเซลฟี่</span>
       <span class="text-xs text-[#9a917f]">เห็นใบหน้าชัด ไม่ใส่แว่นดำ/หน้ากาก</span>
-      <input type="file" accept="image/*" capture="user" class="hidden" onchange="runFaceSearch(this.files[0])">
+      <input type="file" accept="image/jpeg,image/png,image/heic,image/webp" capture="user" class="hidden" onchange="runFaceSearch(this.files[0])">
     </label>
     <div id="fsRun" class="hide">
       <div class="flex items-center gap-3 mb-3"><img id="fsSelf" class="w-16 h-16 rounded-xl object-cover"><p id="fsMsg" class="text-sm text-[#9a917f] flex-1"></p></div>
@@ -524,7 +524,7 @@ async function runFaceSearch(file){
   } catch(e){ faceProgress(`<span class="text-red-400">❌ ${esc(e.message)}</span>`); byId('modalBox').insertAdjacentHTML('beforeend', `<button class="btn btn-p w-full mt-2" onclick="faceSearchUI()">🔄 ลองใหม่</button>`); }
 }
 
-/** แอดมิน: สร้างดัชนีใบหน้าล่วงหน้า ผู้ใช้จะค้นหาได้ทันที */
+// แอดมิน: สร้างดัชนีใบหน้าล่วงหน้า ผู้ใช้จะค้นหาได้ทันที
 async function buildFaceIndexUI(albumId){
   const a = adminAlbums.find(x => x.id === albumId);
   openModal(`<h3 class="font-bold text-lg mb-1">🙂 สร้างดัชนีใบหน้า</h3><p class="text-sm text-[#9a917f] mb-3">${esc(a ? a.name : '')}</p>
