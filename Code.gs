@@ -272,8 +272,9 @@ function getStats(token, days) {
 }
 
 // ====== DOWNLOAD ALL AS ZIP ======
-function getZipPlan(albumId, token, pass) {
+function getZipPlan(albumId, token, pass, ids) {
   const data = getAlbumFiles(albumId, token, pass);
+  if (ids && ids.length) { const want = {}; ids.forEach(i => want[i] = 1); data.files = data.files.filter(f => want[f.id]); } // เฉพาะภาพที่เลือก
   const parts = []; let cur = [], size = 0;
   data.files.forEach(f => {
     if (cur.length && size + f.size > ZIP_PART_LIMIT) { parts.push(cur); cur = []; size = 0; }
@@ -285,12 +286,13 @@ function getZipPlan(albumId, token, pass) {
   return { albumName: data.album.name, totalFiles: data.files.length, totalSize, parts: parts.length, partFileIds: parts, tooBig,
     catOf: data.files.reduce((m, f) => (m[f.id] = f.category, m), {}), multiCat: data.categories.length > 1 };
 }
-function buildAlbumZip(albumId, partIndex, token, pass) {
-  const plan = getZipPlan(albumId, token, pass);
-  const ids = plan.partFileIds[partIndex];
-  if (!ids) throw new Error('ไม่พบส่วนของไฟล์ ZIP');
+function buildAlbumZip(albumId, partIndex, token, pass, ids) {
+  const plan = getZipPlan(albumId, token, pass, ids);
+  const picked = ids && ids.length;
+  const partIds = plan.partFileIds[partIndex];
+  if (!partIds) throw new Error('ไม่พบส่วนของไฟล์ ZIP');
   const used = {};
-  const blobs = ids.map(id => {
+  const blobs = partIds.map(id => {
     const f = DriveApp.getFileById(id);
     let name = (plan.multiCat ? plan.catOf[id] + '/' : '') + f.getName(); // แยกโฟลเดอร์ตามหมวดใน ZIP
     if (used[name]) { const i = name.lastIndexOf('.'); name = (i > 0 ? name.slice(0, i) : name) + '_' + (used[name]++) + (i > 0 ? name.slice(i) : ''); }
@@ -298,7 +300,8 @@ function buildAlbumZip(albumId, partIndex, token, pass) {
     return f.getBlob().setName(name); // ไฟล์ต้นฉบับ ไม่บีบอัด/ไม่ลดขนาด
   });
   const safe = String(plan.albumName).replace(/[\\/:*?"<>|]/g, '_').trim() || 'album';
-  const zipName = plan.parts > 1 ? `${safe}_part${partIndex + 1}of${plan.parts}.zip` : `${safe}.zip`;
+  const base = picked ? `${safe}_เลือก${plan.totalFiles}ภาพ` : safe;
+  const zipName = plan.parts > 1 ? `${base}_part${partIndex + 1}of${plan.parts}.zip` : `${base}.zip`;
   const zip = Utilities.zip(blobs, zipName);
   if (partIndex === 0) logEvent(albumId, '', 'zip');
   return { name: zipName, base64: Utilities.base64Encode(zip.getBytes()), part: partIndex + 1, parts: plan.parts };
@@ -390,6 +393,21 @@ function deleteCategory(token, albumId, name) {
   while (files.hasNext()) files.next().moveTo(root);
   sub.setTrashed(true); invalidate_(a.folderId);
   return listCategories_(a.folderId);
+}
+// ย้ายหลายไฟล์พร้อมกัน
+function moveFiles(token, albumId, ids, name) {
+  auth_(token);
+  const a = findAlbum_(albumId), target = getOrCreateCategory_(a, name);
+  (ids || []).forEach(id => { try { DriveApp.getFileById(id).moveTo(target); } catch (e) {} });
+  invalidate_(a.folderId); return (ids || []).length;
+}
+// ลบหลายไฟล์พร้อมกัน (ย้ายไปถังขยะของ Drive กู้คืนได้ 30 วัน)
+function deleteFiles(token, ids) {
+  auth_(token);
+  const folders = {}; let n = 0;
+  (ids || []).forEach(id => { try { const f = DriveApp.getFileById(id), a = albumOfFile_(f); f.setTrashed(true); n++; if (a) folders[a.folderId] = 1; } catch (e) {} });
+  Object.keys(folders).forEach(invalidate_);
+  return n;
 }
 function moveFileToCategory(token, albumId, fileId, name) {
   auth_(token);

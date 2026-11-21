@@ -68,7 +68,7 @@
         </div>
         <div class="flex flex-wrap gap-2">
           <button id="btnZip" class="btn btn-p" onclick="downloadAllZip()">⬇️ ดาวน์โหลดทั้งอัลบั้ม (.zip)</button>
-          <button class="btn btn-p" onclick="faceSearchUI()">🙋 ค้นหาภาพของฉัน</button><button class="btn btn-g" onclick="openShare()">🔗 แชร์</button>
+          <button class="btn btn-p" onclick="faceSearchUI()">🙋 ค้นหาภาพของฉัน</button><button id="btnSel" class="btn btn-g" onclick="toggleSel()">☑️ เลือกภาพ</button><button class="btn btn-g" onclick="openShare()">🔗 แชร์</button>
           <button class="btn btn-g" onclick="openQR(curAlbum)">▣ QR Code</button>
         </div>
       </div>
@@ -108,8 +108,16 @@
       <button class="btn btn-p w-full sm:w-auto" onclick="doUpload()">🚀 เริ่มอัปโหลด</button>
       <div id="upProg" class="mt-4 space-y-2"></div>
       <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
-        <h4 class="font-semibold">ไฟล์ในอัลบั้มนี้</h4>
+        <div class="flex items-center gap-2"><h4 class="font-semibold">ไฟล์ในอัลบั้มนี้</h4><button id="mSelBtn" class="btn btn-g text-xs px-3 py-1.5" onclick="mToggleSel()">☑️ เลือกหลายไฟล์</button></div>
         <div class="flex flex-wrap gap-2"><button class="btn btn-p" onclick="adminZip(byId('upAlbum').value)">⬇️ ดาวน์โหลดทั้งอัลบั้ม (.zip)</button><button class="btn btn-g" onclick="shareAlbumById(byId('upAlbum').value)">🔗 แชร์ลิงก์อัลบั้ม</button></div>
+      </div>
+      <div id="mSelBar" class="hide mt-3 card p-3 flex flex-wrap items-center justify-between gap-2 border-[#c9a24d]/50">
+        <div class="flex items-center gap-2"><span class="text-sm">เลือกแล้ว <b id="mSelCount" class="text-[#c9a24d] text-lg">0</b> ไฟล์</span>
+          <button class="btn btn-g text-xs px-3 py-1.5" onclick="mSelectAll()">☑️ เลือกทั้งหมด</button><button class="btn btn-g text-xs px-3 py-1.5" onclick="mSel.clear();mRender()">ล้าง</button></div>
+        <div class="flex flex-wrap gap-2">
+          <button class="btn btn-g text-sm" onclick="mMove()">📁 ย้ายหมวด</button>
+          <button class="btn btn-p text-sm" onclick="mZip()">📦 ดาวน์โหลด ZIP</button>
+          <button class="btn btn-d text-sm" onclick="mDelete()">🗑 ลบที่เลือก</button></div>
       </div>
       <div id="manageFiles" class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 mt-3"></div>
     </div>
@@ -200,6 +208,19 @@
   <p id="lbCount" class="text-center text-white/60 text-xs p-2"></p>
 </div>
 
+<!-- SELECTION BAR -->
+<div id="selBar" class="hide fixed bottom-0 inset-x-0 z-40 bg-[#141414]/95 backdrop-blur border-t border-[#c9a24d]/40 p-3">
+  <div class="max-w-7xl mx-auto flex flex-wrap items-center gap-2 justify-between">
+    <div class="flex items-center gap-2"><span class="text-sm">เลือกแล้ว <b id="selCount" class="text-[#c9a24d] text-lg">0</b> ไฟล์</span>
+      <button class="btn btn-g text-xs px-3 py-1.5" onclick="selectAll()">☑️ เลือกทั้งหมด</button><button class="btn btn-g text-xs px-3 py-1.5" onclick="clearSel()">ล้าง</button></div>
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-p text-sm" onclick="selSave('zip')">📦 บันทึกเป็น ZIP</button>
+      <button class="btn btn-g text-sm" onclick="selSave('each')">⬇️ ทีละไฟล์</button>
+      <button class="btn btn-g text-sm" onclick="selSave('social')">📱 โซเชียล 2048px</button>
+      <button class="btn btn-g text-sm" onclick="toggleSel()">✕ ยกเลิก</button></div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[60] hide px-4 py-2.5 rounded-xl text-white text-sm shadow-lg max-w-[90vw]"></div>
 
@@ -275,7 +296,7 @@ async function openAlbum(id){
   show('vAlbum'); byId('fileGrid').innerHTML = loader; byId('aName').textContent = 'กำลังโหลด...'; byId('aDesc').textContent=''; byId('aMeta').textContent='';
   try {
     const d = await call('getAlbumFiles', id, TOKEN, pw(id));
-    curAlbum = d.album; files = d.files; filter = 'all'; catFilter = ''; categories = d.categories || []; myMatches = {}; byId('fMine').classList.add('hide');
+    curAlbum = d.album; files = d.files; filter = 'all'; selMode = false; sel.clear(); renderSelBar(); catFilter = ''; categories = d.categories || []; myMatches = {}; byId('fMine').classList.add('hide');
     if (!USER) call('logEvent', id, '', 'album_view').catch(()=>{});
     renderCats();
     safeHistory(null,'','?album='+id);
@@ -309,10 +330,11 @@ function setFilter(f){
   view = f==='mine' ? files.filter(x => myMatches[x.id] !== undefined).sort((a,b)=>myMatches[a.id]-myMatches[b.id]) : files.filter(x => f==='all' || x.type===f);
   if (catFilter) view = view.filter(x => x.category === catFilter);
   byId('fileGrid').innerHTML = view.length ? view.map((x,i) => `
-    <div class="tile" onclick="openLB(${i})">
-      <img src="${x.thumb}" loading="lazy" decoding="async" onerror="this.style.display='none'">
+    <div class="tile ${selMode && sel.has(x.id) ? 'ring-4 ring-[#c9a24d]' : ''}" onclick="${selMode ? `toggleItem('${x.id}')` : `openLB(${i})`}">
+      <img src="${x.thumb}" loading="lazy" decoding="async" onerror="this.style.display='none'" class="${selMode && sel.has(x.id) ? 'opacity-70' : ''}">
+      ${selMode ? `<span class="absolute top-1.5 left-1.5 w-7 h-7 rounded-full border-2 flex items-center justify-center text-sm font-bold ${sel.has(x.id) ? 'bg-[#c9a24d] border-[#c9a24d] text-[#0a0a0a]' : 'bg-black/40 border-white/80'}">${sel.has(x.id) ? '✓' : ''}</span>` : ''}
       ${x.type==='video'?'<div class="absolute inset-0 flex items-center justify-center"><span class="bg-black/50 text-white rounded-full w-12 h-12 flex items-center justify-center text-xl">▶</span></div>':''}
-      <button onclick="event.stopPropagation();dlMenu(view[${i}])" class="absolute bottom-1.5 right-1.5 bg-[#0a0a0a]/90 hover:bg-[#c9a24d] rounded-lg px-2 py-1 text-xs shadow">⬇️</button>
+      <button onclick="event.stopPropagation();dlMenu(view[${i}])" class="${selMode?'hidden ':''}absolute bottom-1.5 right-1.5 bg-[#0a0a0a]/90 hover:bg-[#c9a24d] rounded-lg px-2 py-1 text-xs shadow">⬇️</button>
     </div>`).join('') : '<p class="col-span-full text-center text-[#9a917f] py-16">ไม่มีไฟล์ในหมวดนี้</p>';
 }
 
@@ -325,6 +347,30 @@ function renderCats(){
     [''].concat(categories).map(c => `<button class="btn btn-g text-xs px-3 py-1.5 shrink-0 ${catFilter===c?'tab-a':''}" onclick="setCat(${JSON.stringify(c).replace(/"/g,'&quot;')})">${c?esc(c):'ทุกหมวด'} <span class="opacity-60">${n(c)}</span></button>`).join('');
 }
 function setCat(c){ catFilter = c; renderCats(); setFilter(filter); }
+
+// ===== MULTI-SELECT (ผู้ใช้): เลือกทั้งหมด / ติ๊กเฉพาะภาพ แล้วบันทึก =====
+let selMode = false; const sel = new Set();
+function renderSelBar(){
+  byId('selBar').classList.toggle('hide', !selMode);
+  byId('selCount').textContent = sel.size;
+  const b = byId('btnSel'); if (b) { b.classList.toggle('tab-a', selMode); b.textContent = selMode ? '✕ เลิกเลือก' : '☑️ เลือกภาพ'; }
+  document.body.style.paddingBottom = selMode ? '90px' : '';
+}
+function toggleSel(){ selMode = !selMode; if (!selMode) sel.clear(); renderSelBar(); setFilter(filter); if (selMode) toast('แตะภาพเพื่อเลือก หรือกด "เลือกทั้งหมด"','info'); }
+function toggleItem(id){ sel.has(id) ? sel.delete(id) : sel.add(id); renderSelBar(); setFilter(filter); }
+function selectAll(){ const all = view.every(x => sel.has(x.id)); view.forEach(x => all ? sel.delete(x.id) : sel.add(x.id)); renderSelBar(); setFilter(filter); }
+function clearSel(){ sel.clear(); renderSelBar(); setFilter(filter); }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function selSave(mode){
+  const picked = files.filter(f => sel.has(f.id));
+  if (!picked.length) return toast('ยังไม่ได้เลือกภาพ','err');
+  if (mode === 'zip') { if (IN_APP) return downloadAllZip(); return zipAnyway(picked.map(f => f.id)); }
+  const list = mode === 'social' ? picked.filter(f => f.type === 'image') : picked;
+  if (!list.length) return toast('ขนาดโซเชียลใช้ได้กับภาพนิ่งเท่านั้น','err');
+  if (IN_APP) return toast('แอป LINE / Messenger บันทึกหลายไฟล์ไม่ได้ — กรุณาเปิดใน Chrome / Safari หรือใช้ ZIP','err');
+  for (let i = 0; i < list.length; i++) { toast(`กำลังบันทึก ${i+1}/${list.length}...`,'info'); await dlFile(list[i], mode === 'social' ? 'social' : ''); await sleep(700); }
+  toast(`บันทึกแล้ว ${list.length} ไฟล์ — หากเบราว์เซอร์ถาม ให้กด "อนุญาตดาวน์โหลดหลายไฟล์"`);
+}
 
 // ===== DOWNLOAD ALL AS ZIP =====
 async function downloadAllZip(){
@@ -342,20 +388,21 @@ async function downloadAllZip(){
   }
   zipAnyway();
 }
-async function zipAnyway(){
+async function zipAnyway(ids){
+  ids = Array.isArray(ids) && ids.length ? ids : null;
   const btn = byId('btnZip'); btn.disabled = true;
   openModal(`<h3 class="font-bold text-lg mb-2">📦 กำลังเตรียมไฟล์ ZIP</h3>
     <p id="zipMsg" class="text-sm text-[#9a917f] mb-3">กำลังตรวจสอบไฟล์ในอัลบั้ม...</p>
     <div class="w-full bg-[#1c1c1c] rounded-full h-3 overflow-hidden"><div id="zipBar" class="h-3 bg-gradient-to-r from-[#c9a24d] to-[#e8c97a] transition-all" style="width:5%"></div></div>
     <p class="text-xs text-[#9a917f] mt-3">ไฟล์ต้นฉบับความละเอียดเต็ม ไม่ลดขนาด — กรุณาอย่าปิดหน้านี้จนกว่าจะเสร็จ</p>`);
   try {
-    const plan = await call('getZipPlan', curAlbum.id, TOKEN, pw(curAlbum.id));
+    const plan = await call('getZipPlan', curAlbum.id, TOKEN, pw(curAlbum.id), ids);
     if (!plan.totalFiles) throw new Error('อัลบั้มนี้ยังไม่มีไฟล์');
     byId('zipMsg').textContent = `พบ ${plan.totalFiles} ไฟล์ (${fmtSize(plan.totalSize)})` + (plan.parts>1?` — แบ่งเป็น ${plan.parts} ไฟล์ ZIP เพื่อไม่ให้เกินขีดจำกัด`:'');
     for (let i = 0; i < plan.parts; i++) {
       byId('zipMsg').textContent = `กำลังบีบรวมไฟล์ ZIP ส่วนที่ ${i+1}/${plan.parts} ...`;
       byId('zipBar').style.width = Math.max(8, (i/plan.parts)*100) + '%';
-      const z = await call('buildAlbumZip', curAlbum.id, i, TOKEN, pw(curAlbum.id));
+      const z = await call('buildAlbumZip', curAlbum.id, i, TOKEN, pw(curAlbum.id), ids);
       saveBase64(z.base64, z.name, 'application/zip');
       byId('zipBar').style.width = ((i+1)/plan.parts*100) + '%';
     }
@@ -714,13 +761,43 @@ async function doUpload(){
   toast(`อัปโหลดสำเร็จ ${done}/${fl.length} ไฟล์`, fail ? 'err' : 'ok'); byId('upFiles').value=''; byId('upCatNew').value=''; loadManageFiles();
   if (done) call('notifyNewPhotos', TOKEN, albumId, done).then(ok => { if (ok) toast(`อัปโหลดสำเร็จ ${done} ไฟล์ • แจ้งเตือน LINE แล้ว ✅`); }).catch(()=>{});
 }
-let manageCats = [];
-async function loadManageFiles(){
+let manageCats = [], manageFilesCache = [], mSelMode = false; const mSel = new Set();
+function mUpdateBar(){ byId('mSelBar').classList.toggle('hide', !mSelMode); byId('mSelCount').textContent = mSel.size;
+  byId('mSelBtn').classList.toggle('tab-a', mSelMode); byId('mSelBtn').textContent = mSelMode ? '✕ เลิกเลือก' : '☑️ เลือกหลายไฟล์'; }
+function mRender(){ mUpdateBar(); loadManageFiles(true); }
+function mToggleSel(){ mSelMode = !mSelMode; mSel.clear(); mRender(); }
+function mToggle(id){ mSel.has(id) ? mSel.delete(id) : mSel.add(id); mRender(); }
+function mSelectAll(){ const all = manageFilesCache.every(f => mSel.has(f.id)); manageFilesCache.forEach(f => all ? mSel.delete(f.id) : mSel.add(f.id)); mRender(); }
+async function mDelete(){
+  if (!mSel.size) return toast('ยังไม่ได้เลือกไฟล์','err');
+  if (!confirm(`ลบ ${mSel.size} ไฟล์ที่เลือก?\n(ไฟล์จะไปอยู่ในถังขยะของ Google Drive กู้คืนได้ภายใน 30 วัน)`)) return;
+  toast('กำลังลบ...','info');
+  try { const n = await call('deleteFiles', TOKEN, [...mSel]); mSel.clear(); toast(`ลบแล้ว ${n} ไฟล์`); mUpdateBar(); loadManageFiles(); } catch(e){ authErr(e); }
+}
+function mMove(){
+  if (!mSel.size) return toast('ยังไม่ได้เลือกไฟล์','err');
+  openModal(`<h3 class="font-bold text-lg mb-3">📁 ย้าย ${mSel.size} ไฟล์ไปหมวด</h3>
+    <select id="mvCat" class="inp mb-2" onchange="byId('mvNew').classList.toggle('hide', this.value!=='__new')"><option value="">ทั่วไป</option>${manageCats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('')}<option value="__new">＋ หมวดใหม่...</option></select>
+    <input id="mvNew" class="inp mb-2 hide" placeholder="ชื่อหมวดใหม่">
+    <button class="btn btn-p w-full mt-2" onclick="mDoMove()">ย้าย</button><button class="btn btn-g w-full mt-2" onclick="closeModal()">ยกเลิก</button>`);
+}
+async function mDoMove(){
+  let c = byId('mvCat').value; if (c === '__new') c = byId('mvNew').value.trim();
+  try { const n = await call('moveFiles', TOKEN, byId('upAlbum').value, [...mSel], c); closeModal(); mSel.clear(); toast(`ย้ายแล้ว ${n} ไฟล์`); mUpdateBar(); loadManageFiles(); } catch(e){ toast(e.message,'err'); }
+}
+function mZip(){
+  if (!mSel.size) return toast('ยังไม่ได้เลือกไฟล์','err');
+  curAlbum = adminAlbums.find(x => x.id === byId('upAlbum').value); zipAnyway([...mSel]);
+}
+let _mCache = null;
+async function loadManageFiles(rerender){
   const id = byId('upAlbum').value, box = byId('manageFiles'); if(!id){ box.innerHTML=''; byId('upCat').innerHTML=''; return; }
-  box.innerHTML = loader;
+  if (!rerender) { if (_mCache && _mCache.id !== id) { mSel.clear(); } box.innerHTML = loader; }
   try {
-    const [d, cats] = await Promise.all([call('getAlbumFiles', id, TOKEN), call('getCategories', TOKEN, id)]);
-    manageCats = cats;
+    let d, cats;
+    if (rerender && _mCache && _mCache.id === id) { d = _mCache.d; cats = _mCache.cats; }
+    else { [d, cats] = await Promise.all([call('getAlbumFiles', id, TOKEN), call('getCategories', TOKEN, id)]); _mCache = { id, d, cats }; }
+    manageCats = cats; manageFilesCache = d.files; mUpdateBar();
     const keep = byId('upCat').value;
     byId('upCat').innerHTML = `<option value="">ทั่วไป (ไม่แยกหมวด)</option>` + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') + `<option value="__new">＋ สร้างหมวดใหม่...</option>`;
     if (keep && [...byId('upCat').options].some(o => o.value === keep)) byId('upCat').value = keep;
@@ -734,10 +811,11 @@ async function loadManageFiles(){
       return `<div class="col-span-full flex items-center justify-between gap-2 mt-3 pb-1 border-b border-[#2e2a22]">
           <span class="text-sm font-semibold text-[#c9a24d]">📂 ${esc(c)} <span class="text-[#9a917f] font-normal">(${fs.length})</span></span>
           ${isA && c !== 'ทั่วไป' ? `<span class="flex gap-1"><button class="btn btn-g text-xs px-2 py-1" onclick="renCat(${q})">✏️ เปลี่ยนชื่อ</button><button class="btn btn-d text-xs px-2 py-1" onclick="delCat(${q})">🗑 ลบหมวด</button></span>` : ''}
-        </div>` + fs.map(f => `<div class="tile" style="cursor:default"><img src="${f.thumb}" loading="lazy">
+        </div>` + fs.map(f => `<div class="tile ${mSelMode && mSel.has(f.id) ? 'ring-4 ring-[#c9a24d]' : ''}" data-mid="${f.id}" style="cursor:${mSelMode?'pointer':'default'}" onclick="mSelMode && mToggle('${f.id}')"><img src="${f.thumb}" loading="lazy" class="${mSelMode && mSel.has(f.id) ? 'opacity-60' : ''}">
+          ${mSelMode ? `<span class="absolute bottom-1 right-1 w-7 h-7 rounded-full border-2 flex items-center justify-center text-sm font-bold ${mSel.has(f.id) ? 'bg-[#c9a24d] border-[#c9a24d] text-[#0a0a0a]' : 'bg-black/40 border-white/80'}">${mSel.has(f.id) ? '✓' : ''}</span>` : ''}
           ${f.type==='video'?'<span class="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 rounded">VIDEO</span>':''}
-          <button onclick="moveFileUI('${f.id}')" title="ย้ายหมวด" class="absolute bottom-1 left-1 bg-black/70 hover:bg-[#c9a24d] text-white rounded-lg w-7 h-7 text-sm">📁</button>
-          <button onclick="delFile('${f.id}','${esc(f.name).replace(/'/g,'')}')" class="absolute top-1 right-1 bg-red-600 text-white rounded-lg w-7 h-7 text-sm">🗑</button></div>`).join('');
+          <button onclick="event.stopPropagation();moveFileUI('${f.id}')" title="ย้ายหมวด" class="${mSelMode?'hidden ':''}absolute bottom-1 left-1 bg-black/70 hover:bg-[#c9a24d] text-white rounded-lg w-7 h-7 text-sm">📁</button>
+          <button onclick="event.stopPropagation();delFile('${f.id}','${esc(f.name).replace(/'/g,'')}')" class="${mSelMode?'hidden ':''}absolute top-1 right-1 bg-red-600 text-white rounded-lg w-7 h-7 text-sm">🗑</button></div>`).join('');
     }).join('');
   } catch(e){ authErr(e); }
 }
