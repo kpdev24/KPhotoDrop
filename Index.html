@@ -217,6 +217,7 @@
       <button class="btn btn-p text-sm" onclick="selSave('zip')">📦 บันทึกเป็น ZIP</button>
       <button class="btn btn-g text-sm" onclick="selSave('each')">⬇️ ทีละไฟล์</button>
       <button class="btn btn-g text-sm" onclick="selSave('social')">📱 โซเชียล 2048px</button>
+      <button id="selDel" class="btn btn-d text-sm hide" onclick="selDelete()">🗑 ลบที่เลือก</button>
       <button class="btn btn-g text-sm" onclick="toggleSel()">✕ ยกเลิก</button></div>
   </div>
 </div>
@@ -355,6 +356,15 @@ function renderSelBar(){
   byId('selCount').textContent = sel.size;
   const b = byId('btnSel'); if (b) { b.classList.toggle('tab-a', selMode); b.textContent = selMode ? '✕ เลิกเลือก' : '☑️ เลือกภาพ'; }
   document.body.style.paddingBottom = selMode ? '90px' : '';
+  byId('selDel').classList.toggle('hide', !USER); // ปุ่มลบเฉพาะทีมงาน/แอดมินที่เข้าสู่ระบบ
+}
+async function selDelete(){
+  if (!USER) return;
+  if (!sel.size) return toast('ยังไม่ได้เลือกไฟล์','err');
+  if (!confirm(`ลบ ${sel.size} ไฟล์ที่เลือก?\n(ไฟล์จะไปอยู่ในถังขยะของ Google Drive กู้คืนได้ภายใน 30 วัน)`)) return;
+  toast('กำลังลบ...','info');
+  try { const n = await call('deleteFiles', TOKEN, [...sel]); toast(`ลบแล้ว ${n} ไฟล์`); const id = curAlbum.id; selMode = false; sel.clear(); renderSelBar(); albums = []; openAlbum(id); }
+  catch(e){ authErr(e); }
 }
 function toggleSel(){ selMode = !selMode; if (!selMode) sel.clear(); renderSelBar(); setFilter(filter); if (selMode) toast('แตะภาพเพื่อเลือก หรือกด "เลือกทั้งหมด"','info'); }
 function toggleItem(id){ sel.has(id) ? sel.delete(id) : sel.add(id); renderSelBar(); setFilter(filter); }
