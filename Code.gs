@@ -118,7 +118,7 @@ function liteOut_(x) {
   const id = x.id;
   return { id, name: x.name, mime: x.mime, type: x.mime.indexOf('video') === 0 ? 'video' : 'image', category: x.cat, size: x.size, created: x.created,
     thumb: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w400',
-    view: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+    view: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600',
     preview: 'https://drive.google.com/file/d/' + id + '/preview',
     download: 'https://drive.google.com/uc?export=download&id=' + id };
 }
@@ -228,7 +228,7 @@ function fileOut_(f, cat) {
   return { id, name: f.getName(), mime: m, type: m.indexOf('video') === 0 ? 'video' : 'image', category: cat,
     size: f.getSize(), created: f.getDateCreated().getTime(),
     thumb: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w600',
-    view: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w2000',
+    view: 'https://drive.google.com/thumbnail?id=' + id + '&sz=w1600',
     preview: 'https://drive.google.com/file/d/' + id + '/preview',
     download: 'https://drive.google.com/uc?export=download&id=' + id };
 }
