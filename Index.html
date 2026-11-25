@@ -101,11 +101,18 @@
         <div><label class="text-sm text-[#9a917f]">เลือกอัลบั้ม</label><select id="upAlbum" class="inp" onchange="loadManageFiles()"></select></div>
         <div><label class="text-sm text-[#9a917f]">📂 หมวดภาพ</label>
           <select id="upCat" class="inp" onchange="byId('upCatNew').classList.toggle('hide', this.value!=='__new')"></select>
-          <input id="upCatNew" class="inp mt-2 hide" placeholder="ชื่อหมวดใหม่ เช่น พิธีเปิด, ภาพหมู่, การแข่งขัน"></div>
+          <input id="upCatNew" class="inp mt-2 hide" placeholder="ชื่อหมวดใหม่ เช่น พิธีเปิด, ภาพหมู่, การแข่งขัน" onkeydown="if(event.key==='Enter'&&pendingFiles.length)doUpload()"></div>
         <div class="sm:col-span-2"><label class="text-sm text-[#9a917f]">📁 ภาพและวิดีโอ — เลือกได้หลายไฟล์พร้อมกัน (JPG, PNG, HEIC, MP4, MOV) ไม่จำกัดขนาด</label>
-          <input id="upFiles" type="file" multiple accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.m4v,.webm,image/jpeg,image/png,image/heic,video/mp4,video/quicktime" class="inp"></div>
+          <label id="upDrop" class="flex flex-col items-center justify-center gap-1 text-center border-2 border-dashed border-[#2e2a22] hover:border-[#c9a24d] rounded-2xl p-6 cursor-pointer transition"
+            ondragover="event.preventDefault();this.classList.add('border-[#c9a24d]','bg-[#c9a24d]/5')" ondragleave="this.classList.remove('border-[#c9a24d]','bg-[#c9a24d]/5')"
+            ondrop="event.preventDefault();this.classList.remove('border-[#c9a24d]','bg-[#c9a24d]/5');startUpload(event.dataTransfer.files)">
+            <span class="text-4xl">📤</span>
+            <span class="font-semibold">แตะเพื่อเลือกภาพ / วิดีโอ <span class="text-[#c9a24d]">— อัปโหลดอัตโนมัติทันที</span></span>
+            <span class="text-xs text-[#9a917f]">เลือกได้หลายไฟล์พร้อมกัน • คอมพิวเตอร์ลากไฟล์มาวางที่นี่ได้</span>
+            <input id="upFiles" type="file" multiple accept=".jpg,.jpeg,.png,.heic,.heif,.webp,.mp4,.mov,.m4v,.webm,image/jpeg,image/png,image/heic,video/mp4,video/quicktime" class="hidden" onchange="startUpload(this.files)">
+          </label></div>
       </div>
-      <button class="btn btn-p w-full sm:w-auto" onclick="doUpload()">🚀 เริ่มอัปโหลด</button>
+      <button id="upRetry" class="btn btn-p w-full sm:w-auto hide" onclick="doUpload()">🚀 เริ่มอัปโหลด</button>
       <div id="upProg" class="mt-4 space-y-2"></div>
       <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2"><h4 class="font-semibold">ไฟล์ในอัลบั้มนี้</h4><button id="mSelBtn" class="btn btn-g text-xs px-3 py-1.5" onclick="mToggleSel()">☑️ เลือกหลายไฟล์</button></div>
@@ -744,11 +751,21 @@ async function uploadOne(f, albumId, cat, row){
     prog(1);
   }
 }
+// อัปโหลดอัตโนมัติเมื่อเลือกไฟล์ / ลากวาง
+let pendingFiles = [], uploading = false;
+function startUpload(list){
+  const fl = [...(list || [])]; if (!fl.length) return;
+  if (uploading) { pendingFiles = pendingFiles.concat(fl); toast(`เพิ่มเข้าคิว ${fl.length} ไฟล์ — จะอัปโหลดต่อหลังชุดนี้เสร็จ`,'info'); return; }
+  pendingFiles = fl; byId('upFiles').value = ''; doUpload();
+}
 async function doUpload(){
-  const albumId = byId('upAlbum').value, fl = [...byId('upFiles').files];
+  const albumId = byId('upAlbum').value, fl = pendingFiles.slice();
+  const needName = byId('upCat').value === '__new' && !byId('upCatNew').value.trim();
+  if (fl.length && (!albumId || needName)) { byId('upRetry').classList.remove('hide'); byId('upRetry').textContent = `🚀 อัปโหลด ${fl.length} ไฟล์ที่เลือกไว้`; }
   if(!albumId) return toast('กรุณาเลือกอัลบั้ม','err');
   if(!fl.length) return toast('กรุณาเลือกไฟล์','err');
-  let cat = byId('upCat').value; if (cat === '__new') { cat = byId('upCatNew').value.trim(); if (!cat) return toast('กรุณาตั้งชื่อหมวดใหม่','err'); }
+  let cat = byId('upCat').value; if (cat === '__new') { cat = byId('upCatNew').value.trim(); if (!cat) { byId('upCatNew').focus(); return toast('ตั้งชื่อหมวดใหม่ก่อน แล้วกด Enter หรือปุ่มอัปโหลด','err'); } }
+  pendingFiles = []; uploading = true; byId('upRetry').classList.add('hide');
   const totalSize = fl.reduce((s, f) => s + f.size, 0);
   const box = byId('upProg');
   box.innerHTML = `<div class="text-sm text-[#9a917f] mb-1" id="upSum">กำลังอัปโหลด 0/${fl.length} ไฟล์ (${fmtSize(totalSize)}) — พร้อมกัน ${UP_CONCURRENCY} ไฟล์</div>` +
@@ -768,8 +785,10 @@ async function doUpload(){
   };
   await Promise.all(Array.from({length: Math.min(UP_CONCURRENCY, fl.length)}, worker));
   if (btn) btn.disabled = false;
+  uploading = false;
   toast(`อัปโหลดสำเร็จ ${done}/${fl.length} ไฟล์`, fail ? 'err' : 'ok'); byId('upFiles').value=''; byId('upCatNew').value=''; loadManageFiles();
   if (done) call('notifyNewPhotos', TOKEN, albumId, done).then(ok => { if (ok) toast(`อัปโหลดสำเร็จ ${done} ไฟล์ • แจ้งเตือน LINE แล้ว ✅`); }).catch(()=>{});
+  if (pendingFiles.length) setTimeout(doUpload, 800); // มีไฟล์รอคิวต่อ
 }
 let manageCats = [], manageFilesCache = [], mSelMode = false; const mSel = new Set();
 function mUpdateBar(){ byId('mSelBar').classList.toggle('hide', !mSelMode); byId('mSelCount').textContent = mSel.size;
