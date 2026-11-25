@@ -7,7 +7,7 @@
 <title>PhotoDrop Event Gallery System by KPDev.</title>
 <script>
 // แสดงข้อผิดพลาดของสคริปต์บนหน้าเว็บ (ช่วยหาสาเหตุเมื่อหน้าเว็บไม่ทำงาน)
-window.PD_VERSION = '2026-11-25b';
+window.PD_VERSION = '2026-11-25c';
 window.addEventListener('error', function (e) {
   try {
     var b = document.getElementById('pdErr');
@@ -219,7 +219,7 @@ window.addEventListener('error', function (e) {
 <footer class="border-t border-[#2e2a22] py-6 px-3 text-center">
   <p class="font-semibold">PhotoDrop Event Gallery System <span class="text-[#c9a24d]">by KPDev.</span></p>
   <p class="text-[#9a917f] text-xs mt-1">ดาวน์โหลดภาพถ่ายกิจกรรมความคมชัดสูง ผ่านการสแกน QR Code</p>
-  <p class="text-[#9a917f]/50 text-[10px] mt-1">v2026-11-25b</p>
+  <p class="text-[#9a917f]/50 text-[10px] mt-1">v2026-11-25c</p>
 </footer>
 
 <!-- GENERIC MODAL -->
@@ -263,6 +263,8 @@ window.addEventListener('error', function (e) {
 <script>
 // ลิงก์สาธารณะสำหรับ QR Code / แชร์ / LINE — ตั้งค่าได้ในเมนูตั้งค่าระบบ
 let PUBLIC_BASE = 'https://kpdev24.github.io/KPhotoDrop/';
+const DRIVE_THUMB = 'https://drive.google.com/thumbnail?sz=w800&id=';
+function coverSrc(id){ return DRIVE_THUMB + id; }
 const albumPass = {}; // รหัสผ่านอัลบั้มที่ผู้ใช้กรอกแล้ว (เก็บในหน่วยความจำเท่านั้น)
 const pw = id => albumPass[id] || ''; // { a: รหัสอัลบั้มหลัก, s: { อัลบั้มย่อย: รหัส } }
 const passObj = id => (albumPass[id] = albumPass[id] || { a: '', s: {} });
@@ -322,7 +324,7 @@ function renderAlbums(){
   byId('albumGrid').innerHTML = list.length ? list.map(a => `
     <div class="card overflow-hidden cursor-pointer hover:-translate-y-1 transition" onclick="openAlbum('${a.id}')">
       <div class="aspect-video bg-gradient-to-br from-[#1c1c1c] to-[#0a0a0a] flex items-center justify-center overflow-hidden">
-        ${a.locked ? '<div class="text-center"><span class="text-5xl">🔒</span><p class="text-xs text-[#c9a24d] mt-2">อัลบั้มส่วนตัว — ต้องใช้รหัสผ่าน</p></div>' : a.cover ? `<img src="${a.coverUrl || 'https://drive.google.com/thumbnail?id=' + a.cover + '&sz=w800'}" class="w-full h-full object-cover" loading="lazy" decoding="async">` : '<span class="text-5xl">📷</span>'}
+        ${a.locked ? '<div class="text-center"><span class="text-5xl">🔒</span><p class="text-xs text-[#c9a24d] mt-2">อัลบั้มส่วนตัว — ต้องใช้รหัสผ่าน</p></div>' : a.cover ? `<img src="${a.coverUrl || coverSrc(a.cover)}" class="w-full h-full object-cover" loading="lazy" decoding="async">` : '<span class="text-5xl">📷</span>'}
       </div>
       <div class="p-4"><h3 class="font-semibold truncate">${a.locked?'🔒 ':''}${esc(a.name)}</h3>
         <p class="text-sm text-[#9a917f] line-clamp-2 min-h-[1.25rem]">${esc(a.description)}</p>

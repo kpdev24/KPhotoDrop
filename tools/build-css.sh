@@ -20,3 +20,15 @@ open('Index.html', 'w').write(s)
 print('CSS', len(css)//1024, 'KB')
 PY
 rm -rf "$TMP"
+# ตรวจรูปแบบที่ทำให้ Apps Script แปลงโค้ดผิด (หน้าเว็บว่าง)
+python3 - <<'PY'
+import re, sys
+s = open('Index.html').read()
+bad = []
+if '/*' in s: bad.append('พบ "/*" ในไฟล์')
+for js in re.findall(r'<script>(.*?)</script>', s, re.S):
+    for L in js.split('\n'):
+        if '`' in L and '//' in L: bad.append('บรรทัดที่มี ` และ // : ' + L.strip()[:80])
+if bad: print('❌ ' + '\n❌ '.join(bad)); sys.exit(1)
+print('✅ ผ่านการตรวจรูปแบบสำหรับ Apps Script')
+PY
