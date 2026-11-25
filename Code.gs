@@ -9,6 +9,7 @@ const SHEET_ALBUMS = 'Albums';
 const SHEET_USERS = 'Users';
 const SHEET_SETTINGS = 'Settings';
 const SHEET_STATS = 'Stats';
+const SHEET_SUBS = 'SubAlbums';
 const SESSION_HOURS = 8;
 const ZIP_PART_LIMIT = 35 * 1024 * 1024; // ~35MB ต่อไฟล์ ZIP (Base64 โต ~33% ไม่ให้เกินลิมิต 50MB ของ google.script.run)
 const FACE_FILE = '_faces.json';
@@ -19,7 +20,8 @@ const SHEET_DEFS = {
   [SHEET_ALBUMS]: ['id', 'name', 'description', 'folderId', 'status', 'startDate', 'endDate', 'createdAt', 'createdBy', 'passwordHash'],
   [SHEET_USERS]: ['id', 'username', 'passwordHash', 'name', 'role', 'status', 'createdAt'],
   [SHEET_SETTINGS]: ['key', 'value'],
-  [SHEET_STATS]: ['time', 'date', 'albumId', 'fileId', 'action']
+  [SHEET_STATS]: ['time', 'date', 'albumId', 'fileId', 'action'],
+  [SHEET_SUBS]: ['albumId', 'name', 'description', 'passwordHash']
 };
 
 // ====== WEB APP ======
@@ -155,11 +157,38 @@ function isAlbumVisible_(a) {
   return true;
 }
 /** ตรวจสิทธิ์เข้าอัลบั้ม: ทีมงานผ่านเสมอ / ผู้ใช้ทั่วไปต้องเป็นอัลบั้มที่เปิดแสดง และใส่รหัสผ่านถูก (ถ้ามี) */
+// pass = รหัสอัลบั้ม (ข้อความ) หรือ { a: รหัสอัลบั้มหลัก, s: { ชื่ออัลบั้มย่อย: รหัส } }
+function normPass_(p) { return (p && typeof p === 'object') ? { a: String(p.a || ''), s: p.s || {} } : { a: String(p || ''), s: {} }; }
 function checkAlbumAccess_(a, token, pass) {
   if (isStaff_(token)) return true;
   if (!isAlbumVisible_(a)) throw new Error('อัลบั้มนี้ยังไม่เปิดแสดงผลหรือหมดเวลาแสดงผลแล้ว');
-  if (a.passwordHash && hash_(String(pass || '')) !== a.passwordHash) throw new Error('PASSWORD_REQUIRED');
+  if (a.passwordHash && hash_(normPass_(pass).a) !== a.passwordHash) throw new Error('PASSWORD_REQUIRED');
   return true;
+}
+// ====== SUB-ALBUMS (อัลบั้มย่อย = โฟลเดอร์ย่อย + ข้อมูลในชีต SubAlbums) ======
+function subMeta_(albumId) { const m = {}; rows_(SHEET_SUBS).filter(r => r.albumId === albumId).forEach(r => m[String(r.name)] = r); return m; }
+/** อัลบั้มย่อยที่ผู้ใช้ยังเปิดไม่ได้ (มีรหัสแต่ยังไม่ใส่/ใส่ผิด) */
+function lockedSubs_(albumId, token, pass) {
+  if (isStaff_(token)) return {};
+  const pv = normPass_(pass).s, meta = subMeta_(albumId), out = {};
+  Object.keys(meta).forEach(n => { const h = meta[n].passwordHash; if (h && hash_(String(pv[n] || '')) !== h) out[n] = 1; });
+  return out;
+}
+function checkSubPassword(albumId, name, pw) {
+  const a = findAlbum_(albumId);
+  if (!isAlbumVisible_(a)) throw new Error('อัลบั้มนี้ยังไม่เปิดแสดงผล');
+  const m = subMeta_(albumId)[name];
+  if (m && m.passwordHash && hash_(String(pw || '')) !== m.passwordHash) throw new Error('รหัสผ่านไม่ถูกต้อง');
+  return true;
+}
+function upsertSub_(albumId, name, fields) {
+  const r = rows_(SHEET_SUBS).find(x => x.albumId === albumId && String(x.name) === name);
+  if (r) { Object.assign(r, fields); writeRow_(SHEET_SUBS, r._row, r); }
+  else appendObj_(SHEET_SUBS, Object.assign({ albumId, name, description: '', passwordHash: '' }, fields));
+}
+function deleteSubRow_(albumId, name) {
+  const r = rows_(SHEET_SUBS).find(x => x.albumId === albumId && String(x.name) === name);
+  if (r) sheet_(SHEET_SUBS).deleteRow(r._row);
 }
 function findAlbum_(albumId) {
   const a = rows_(SHEET_ALBUMS).find(x => x.id === albumId);
@@ -226,9 +255,18 @@ function getPublicAlbums() {
 function getAlbumFiles(albumId, token, pass) {
   const a = findAlbum_(albumId);
   checkAlbumAccess_(a, token, pass);
-  const files = listFilesLite_(a.folderId, isStaff_(token)).map(liteOut_).sort((x, y) => y.created - x.created); // ทีมงานเห็นข้อมูลล่าสุดเสมอ
-  const cats = [DEFAULT_CATEGORY].concat(listCategories_(a.folderId)).filter(c => files.some(f => f.category === c));
-  return { album: albumOut_(a, false), files, categories: cats };
+  const staff = isStaff_(token);
+  const all = listFilesLite_(a.folderId, staff).map(liteOut_).sort((x, y) => y.created - x.created); // ทีมงานเห็นข้อมูลล่าสุดเสมอ
+  const locked = lockedSubs_(albumId, token, pass), meta = subMeta_(albumId);
+  const files = all.filter(f => !locked[f.category]); // ไม่ส่งไฟล์ของอัลบั้มย่อยที่ยังไม่ได้ใส่รหัส
+  const names = listCategories_(a.folderId);
+  const subs = names.map(n => {
+    const fs = all.filter(f => f.category === n), m = meta[n] || {};
+    const cov = fs.find(f => f.type === 'image');
+    return { name: n, description: m.description || '', count: fs.length, hasPassword: !!m.passwordHash, locked: !!locked[n], cover: (!locked[n] && cov) ? cov.thumb : '' };
+  }).filter(x => x.count || staff);
+  const cats = [DEFAULT_CATEGORY].concat(names).filter(c => files.some(f => f.category === c));
+  return { album: albumOut_(a, false), files, categories: cats, subs, generalCount: all.filter(f => f.category === DEFAULT_CATEGORY).length };
 }
 
 // ====== STATS ======
@@ -320,6 +358,10 @@ function getFileData(fileId, token, pass, mode) {
   const a = albumOfFile_(f);
   if (!a) throw new Error('ไม่พบอัลบั้มของไฟล์นี้');
   checkAlbumAccess_(a, token, pass);
+  const locked = lockedSubs_(a.id, token, pass);
+  if (Object.keys(locked).length) {
+    const ps = f.getParents(); while (ps.hasNext()) { const p = ps.next(); if (p.getId() !== a.folderId && locked[p.getName()]) throw new Error('อัลบั้มย่อยนี้ต้องใช้รหัสผ่าน'); }
+  }
   logEvent(a.id, fileId, mode === 'social' ? 'download_social' : 'download');
   if (f.getSize() > ZIP_PART_LIMIT) return { tooBig: true, url: 'https://drive.google.com/uc?export=download&id=' + fileId, name: f.getName() };
   return { name: f.getName(), mime: f.getMimeType(), base64: Utilities.base64Encode(f.getBlob().getBytes()) };
@@ -381,7 +423,7 @@ function renameCategory(token, albumId, oldName, newName) {
   if (!newName || /[\\/]/.test(newName)) throw new Error('ชื่อหมวดไม่ถูกต้อง');
   const it = DriveApp.getFolderById(findAlbum_(albumId).folderId).getFoldersByName(oldName);
   if (!it.hasNext()) throw new Error('ไม่พบหมวด');
-  it.next().setName(newName); invalidate_(findAlbum_(albumId).folderId); return listCategories_(findAlbum_(albumId).folderId);
+  it.next().setName(newName); upsertSub_(albumId, oldName, { name: newName }); invalidate_(findAlbum_(albumId).folderId); return listCategories_(findAlbum_(albumId).folderId);
 }
 /** ลบหมวด: ย้ายไฟล์ในหมวดกลับไปหมวด "ทั่วไป" แล้วลบโฟลเดอร์ (ไฟล์ไม่หาย) */
 function deleteCategory(token, albumId, name) {
@@ -391,8 +433,39 @@ function deleteCategory(token, albumId, name) {
   if (!it.hasNext()) throw new Error('ไม่พบหมวด');
   const sub = it.next(), files = sub.getFiles();
   while (files.hasNext()) files.next().moveTo(root);
-  sub.setTrashed(true); invalidate_(a.folderId);
+  sub.setTrashed(true); deleteSubRow_(albumId, name); invalidate_(a.folderId);
   return listCategories_(a.folderId);
+}
+// ====== SUB-ALBUM ADMIN ======
+function getSubAlbums(token, albumId) {
+  auth_(token);
+  const a = findAlbum_(albumId), meta = subMeta_(albumId), all = listFilesLite_(a.folderId, true);
+  return listCategories_(a.folderId).map(n => {
+    const fs = all.filter(f => f.cat === n), cov = fs.find(f => f.mime.indexOf('image') === 0);
+    return { name: n, description: (meta[n] || {}).description || '', hasPassword: !!(meta[n] || {}).passwordHash, count: fs.length,
+      cover: cov ? 'https://drive.google.com/thumbnail?id=' + cov.id + '&sz=w400' : '' };
+  });
+}
+/** สร้าง/แก้ไขอัลบั้มย่อย: d = { oldName, name, description, password, removePassword } */
+function saveSubAlbum(token, albumId, d) {
+  auth_(token, true);
+  const a = findAlbum_(albumId), name = String(d.name || '').trim();
+  if (!name || name === DEFAULT_CATEGORY || /[\\/]/.test(name)) throw new Error('ชื่ออัลบั้มย่อยไม่ถูกต้อง');
+  if (d.password && String(d.password).length < 4) throw new Error('รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร');
+  const root = DriveApp.getFolderById(a.folderId);
+  if (d.oldName && d.oldName !== name) {
+    if (root.getFoldersByName(name).hasNext()) throw new Error('มีอัลบั้มย่อยชื่อนี้แล้ว');
+    const it = root.getFoldersByName(d.oldName); if (!it.hasNext()) throw new Error('ไม่พบอัลบั้มย่อย');
+    it.next().setName(name); upsertSub_(albumId, d.oldName, { name });
+  } else if (!d.oldName) {
+    if (root.getFoldersByName(name).hasNext()) throw new Error('มีอัลบั้มย่อยชื่อนี้แล้ว');
+    root.createFolder(name);
+  }
+  const f = { description: String(d.description || '') };
+  if (d.removePassword) f.passwordHash = ''; else if (d.password) f.passwordHash = hash_(d.password);
+  upsertSub_(albumId, name, f);
+  invalidate_(a.folderId);
+  return getSubAlbums(token, albumId);
 }
 // ย้ายหลายไฟล์พร้อมกัน
 function moveFiles(token, albumId, ids, name) {

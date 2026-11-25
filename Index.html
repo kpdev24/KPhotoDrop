@@ -80,6 +80,7 @@
       </div>
       <div id="catBar" class="hide flex gap-2 overflow-x-auto pb-1 mt-3"></div>
     </div>
+    <div id="subSec" class="hide mb-4"></div>
     <div id="fileGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-3"></div>
   </section>
 
@@ -99,7 +100,7 @@
       <h3 class="font-bold text-lg mb-1">อัปโหลดไฟล์จริงขึ้น Google Drive (ไม่บีบอัด)</h3><p class="text-xs text-[#9a917f] mb-4">อัปโหลดตรงเข้า Drive พร้อมกัน 3 ไฟล์ • วิดีโอไฟล์ใหญ่ได้ • อย่าปิดหน้านี้จนกว่าจะเสร็จ</p>
       <div class="grid sm:grid-cols-2 gap-3 mb-3">
         <div><label class="text-sm text-[#9a917f]">เลือกอัลบั้ม</label><select id="upAlbum" class="inp" onchange="loadManageFiles()"></select></div>
-        <div><label class="text-sm text-[#9a917f]">📂 หมวดภาพ</label>
+        <div><label class="text-sm text-[#9a917f]">📂 อัลบั้มย่อย / หมวดภาพ</label>
           <select id="upCat" class="inp" onchange="byId('upCatNew').classList.toggle('hide', this.value!=='__new')"></select>
           <input id="upCatNew" class="inp mt-2 hide" placeholder="ชื่อหมวดใหม่ เช่น พิธีเปิด, ภาพหมู่, การแข่งขัน" onkeydown="if(event.key==='Enter'&&pendingFiles.length)doUpload()"></div>
         <div class="sm:col-span-2"><label class="text-sm text-[#9a917f]">📁 ภาพและวิดีโอ — เลือกได้หลายไฟล์พร้อมกัน (JPG, PNG, HEIC, MP4, MOV) ไม่จำกัดขนาด</label>
@@ -236,7 +237,8 @@
 // ลิงก์สาธารณะสำหรับ QR Code / แชร์ / LINE — ตั้งค่าได้ในเมนูตั้งค่าระบบ
 let PUBLIC_BASE = 'https://kpdev24.github.io/KPhotoDrop/';
 const albumPass = {}; // รหัสผ่านอัลบั้มที่ผู้ใช้กรอกแล้ว (เก็บในหน่วยความจำเท่านั้น)
-const pw = id => albumPass[id] || '';
+const pw = id => albumPass[id] || ''; // { a: รหัสอัลบั้มหลัก, s: { อัลบั้มย่อย: รหัส } }
+const passObj = id => (albumPass[id] = albumPass[id] || { a: '', s: {} });
 // ที่เก็บข้อมูลแบบปลอดภัย: บางเบราว์เซอร์บล็อก sessionStorage เมื่อเว็บถูกฝัง (iframe) → ใช้หน่วยความจำแทน
 const store = (() => { const mem = {}; let ss = null; try { ss = window.sessionStorage; ss.setItem('_t','1'); ss.removeItem('_t'); } catch(e){ ss = null; }
   return { get:k => { try { return ss ? ss.getItem(k) : (mem[k] ?? null); } catch(e){ return mem[k] ?? null; } },
@@ -259,7 +261,7 @@ function toast(msg, type='ok') {
   clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hide'), 3500);
 }
 function openModal(html){ byId('modalBox').innerHTML = html; byId('modal').classList.remove('hide'); }
-function closeModal(){ byId('modal').classList.add('hide'); }
+function closeModal(){ byId('modal').classList.add('hide'); byId('modalBox').classList.replace('max-w-lg','max-w-md'); }
 function show(v){ ['vHome','vAlbum','vAdmin'].forEach(x => byId(x).classList.toggle('hide', x!==v)); window.scrollTo(0,0); }
 const loader = '<div class="col-span-full flex justify-center py-16"><div class="spin"></div></div>';
 
@@ -269,8 +271,8 @@ function safeHistory(a,b,c){ try { history.replaceState(a,b,c); } catch(e){} }
   renderHeader();
   const cfg = await call('getPublicConfig').catch(()=> null);
   if (cfg) { WEB_URL = cfg.webAppUrl || ''; if (cfg.publicUrl) PUBLIC_BASE = cfg.publicUrl; }
-  const param = await new Promise(res => { try { google.script.url.getLocation(l => res((l.parameter && l.parameter.album) || '')); } catch(e){ res(''); } });
-  if (param) openAlbum(param); else loadAlbums();
+  const prm = await new Promise(res => { try { google.script.url.getLocation(l => res(l.parameter || {})); } catch(e){ res({}); } });
+  if (prm.album) openAlbum(prm.album, prm.sub || ''); else loadAlbums();
 })();
 
 function renderHeader(){
@@ -300,11 +302,13 @@ function renderAlbums(){
         <div class="flex items-center justify-between mt-2"><p class="text-xs text-[#c9a24d]">${a.count} ไฟล์</p><button class="btn btn-g text-xs px-2 py-1" onclick="event.stopPropagation();openQRId('${a.id}')">▣ QR</button></div></div>
     </div>`).join('') : '<p class="col-span-full text-center text-[#9a917f] py-16">ยังไม่มีอัลบั้มที่เปิดแสดงผล</p>';
 }
-async function openAlbum(id){
+let subs = [], generalCount = 0;
+async function openAlbum(id, sub){
+  window._pendingSub = sub || '';
   show('vAlbum'); byId('fileGrid').innerHTML = loader; byId('aName').textContent = 'กำลังโหลด...'; byId('aDesc').textContent=''; byId('aMeta').textContent='';
   try {
     const d = await call('getAlbumFiles', id, TOKEN, pw(id));
-    curAlbum = d.album; files = d.files; filter = 'all'; selMode = false; sel.clear(); renderSelBar(); catFilter = ''; categories = d.categories || []; myMatches = {}; byId('fMine').classList.add('hide');
+    curAlbum = d.album; files = d.files; subs = d.subs || []; generalCount = d.generalCount || 0; filter = 'all'; selMode = false; sel.clear(); renderSelBar(); catFilter = ''; categories = d.categories || []; myMatches = {}; byId('fMine').classList.add('hide');
     if (!USER) call('logEvent', id, '', 'album_view').catch(()=>{});
     renderCats();
     safeHistory(null,'','?album='+id);
@@ -313,6 +317,7 @@ async function openAlbum(id){
     byId('aMeta').textContent = `${files.filter(f=>f.type==='image').length} ภาพ • ${files.filter(f=>f.type==='video').length} วิดีโอ • รวม ${fmtSize(total)}`;
     byId('btnZip').disabled = !files.length;
     setFilter('all');
+    if (sub) enterSub(sub);
   } catch(e){
     if (/PASSWORD_REQUIRED/.test(e.message)) { byId('aName').textContent = '🔒 อัลบั้มส่วนตัว'; byId('fileGrid').innerHTML = ''; return askAlbumPass(id); }
     byId('aName').textContent = 'ไม่สามารถเปิดอัลบั้มได้'; byId('fileGrid').innerHTML = `<p class="col-span-full text-center text-red-500 py-10">${esc(e.message)}</p>`; }
@@ -330,7 +335,7 @@ function askAlbumPass(id){
 async function submitAlbumPass(id){
   const v = byId('apIn').value, b = byId('apBtn'); if (!v) return;
   b.disabled = true; byId('apErr').textContent = '';
-  try { await call('checkAlbumPassword', id, v); albumPass[id] = v; closeModal(); openAlbum(id); }
+  try { await call('checkAlbumPassword', id, v); passObj(id).a = v; closeModal(); openAlbum(id, window._pendingSub || ''); }
   catch(e){ byId('apErr').textContent = e.message; b.disabled = false; }
 }
 function setFilter(f){
@@ -347,14 +352,56 @@ function setFilter(f){
 }
 
 function renderCats(){
-  const bar = byId('catBar');
-  if (categories.length < 2) { bar.classList.add('hide'); return; }
-  bar.classList.remove('hide');
-  const n = c => files.filter(x => !c || x.category === c).length;
-  bar.innerHTML = `<span class="text-xs text-[#9a917f] self-center shrink-0">📂 หมวด:</span>` +
-    [''].concat(categories).map(c => `<button class="btn btn-g text-xs px-3 py-1.5 shrink-0 ${catFilter===c?'tab-a':''}" onclick="setCat(${JSON.stringify(c).replace(/"/g,'&quot;')})">${c?esc(c):'ทุกหมวด'} <span class="opacity-60">${n(c)}</span></button>`).join('');
+  byId('catBar').classList.add('hide'); // ใช้การ์ดอัลบั้มย่อยแทนปุ่มหมวด
+  const box = byId('subSec');
+  if (!subs.length) { box.classList.add('hide'); box.innerHTML = ''; return; }
+  box.classList.remove('hide');
+  const q = n => JSON.stringify(n).replace(/"/g,'&quot;');
+  if (catFilter) { // อยู่ในอัลบั้มย่อย
+    const s = subs.find(x => x.name === catFilter) || { name: catFilter, description: '' };
+    box.innerHTML = `<div class="card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-[#c9a24d]/40">
+      <div class="min-w-0"><button class="text-sm text-[#c9a24d] hover:underline" onclick="setCat('')">← ${esc(curAlbum.name)}</button>
+        <h3 class="text-lg font-bold mt-1 break-words">📂 ${esc(s.name)} ${s.hasPassword?'<span class="text-sm">🔒</span>':''}</h3>
+        ${s.description?`<p class="text-sm text-[#9a917f] break-words">${esc(s.description)}</p>`:''}
+        <p class="text-xs text-[#c9a24d] mt-1">${files.filter(f=>f.category===s.name).length} ไฟล์</p></div>
+      <div class="flex gap-2 shrink-0"><button class="btn btn-g text-sm" onclick="openShare(curAlbum, ${q(s.name)})">🔗 แชร์</button><button class="btn btn-g text-sm" onclick="openQR(curAlbum, ${q(s.name)})">▣ QR อัลบั้มย่อย</button></div></div>`;
+    return;
+  }
+  box.innerHTML = `<h3 class="font-semibold mb-2">📂 อัลบั้มย่อย <span class="text-[#9a917f] font-normal text-sm">(${subs.length})</span></h3>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">${subs.map(s => `
+      <div class="card overflow-hidden cursor-pointer hover:border-[#c9a24d] transition" onclick="enterSub(${q(s.name)})">
+        <div class="aspect-[4/3] bg-gradient-to-br from-[#1c1c1c] to-[#0a0a0a] flex items-center justify-center overflow-hidden relative">
+          ${s.locked ? '<span class="text-4xl">🔒</span>' : s.cover ? `<img src="${s.cover}" class="w-full h-full object-cover" loading="lazy">` : '<span class="text-4xl">📂</span>'}
+          <span class="absolute top-1.5 right-1.5 text-[10px] bg-black/70 rounded px-1.5 py-0.5">${s.count} ไฟล์</span>
+          ${s.hasPassword && !s.locked ? '<span class="absolute top-1.5 left-1.5 text-xs">🔓</span>' : ''}</div>
+        <div class="p-2.5"><div class="font-medium text-sm truncate">${esc(s.name)}</div>
+          <div class="text-[11px] text-[#9a917f] truncate">${s.locked ? 'ต้องใช้รหัสผ่าน' : esc(s.description || '')}&nbsp;</div></div>
+      </div>`).join('')}</div>
+    <h3 class="font-semibold mt-5">📷 ภาพทั้งหมดในอัลบั้ม</h3>`;
 }
-function setCat(c){ catFilter = c; renderCats(); setFilter(filter); }
+function enterSub(name){
+  const s = subs.find(x => x.name === name);
+  if (!s) { toast('ไม่พบอัลบั้มย่อย "' + name + '"','err'); return; }
+  if (s.locked) return askSubPass(name);
+  setCat(name);
+}
+function askSubPass(name){
+  const id = curAlbum.id, q = JSON.stringify(name).replace(/"/g,'&quot;');
+  openModal(`<div class="text-center"><div class="text-5xl mb-2">🔒</div><h3 class="font-bold text-lg">อัลบั้มย่อยนี้ต้องใช้รหัสผ่าน</h3>
+    <p class="text-sm text-[#9a917f] mb-4">${esc(curAlbum.name)} › ${esc(name)}</p></div>
+    <input id="spIn" type="password" class="inp mb-2 text-center text-lg tracking-widest" placeholder="รหัสผ่านอัลบั้มย่อย" onkeydown="if(event.key==='Enter')submitSubPass(${q})">
+    <p id="spErr" class="text-sm text-red-400 mb-2 text-center"></p>
+    <button id="spBtn" class="btn btn-p w-full" onclick="submitSubPass(${q})">🔓 เข้าดู</button>
+    <button class="btn btn-g w-full mt-2" onclick="closeModal()">ยกเลิก</button>`);
+  setTimeout(() => byId('spIn') && byId('spIn').focus(), 100);
+}
+async function submitSubPass(name){
+  const v = byId('spIn').value, b = byId('spBtn'); if (!v) return;
+  b.disabled = true; byId('spErr').textContent = '';
+  try { await call('checkSubPassword', curAlbum.id, name, v); passObj(curAlbum.id).s[name] = v; closeModal(); openAlbum(curAlbum.id, name); }
+  catch(e){ byId('spErr').textContent = e.message; b.disabled = false; }
+}
+function setCat(c){ catFilter = c; renderCats(); setFilter(filter); safeHistory(null,'','?album=' + curAlbum.id + (c ? '&sub=' + encodeURIComponent(c) : '')); if (c) byId('subSec').scrollIntoView({behavior:'smooth', block:'start'}); }
 
 // ===== MULTI-SELECT (ผู้ใช้): เลือกทั้งหมด / ติ๊กเฉพาะภาพ แล้วบันทึก =====
 let selMode = false; const sel = new Set();
@@ -623,10 +670,10 @@ document.addEventListener('keydown', e => { if(byId('lb').classList.contains('hi
 
 // ===== SHARE / QR =====
 const baseUrl = () => PUBLIC_BASE || WEB_URL || location.href.split('?')[0];
-const albumUrl = a => baseUrl() + '?album=' + a.id;
-function openShare(a = curAlbum){
-  const u = albumUrl(a), t = encodeURIComponent('ภาพกิจกรรม: ' + a.name), eu = encodeURIComponent(u);
-  openModal(`<h3 class="font-bold text-lg mb-4">🔗 แชร์อัลบั้ม</h3>
+const albumUrl = (a, sub) => baseUrl() + '?album=' + a.id + (sub ? '&sub=' + encodeURIComponent(sub) : '');
+function openShare(a = curAlbum, sub = ''){
+  const u = albumUrl(a, sub), t = encodeURIComponent('ภาพกิจกรรม: ' + a.name + (sub ? ' › ' + sub : '')), eu = encodeURIComponent(u);
+  openModal(`<h3 class="font-bold text-lg mb-1">🔗 แชร์${sub ? 'อัลบั้มย่อย' : 'อัลบั้ม'}</h3><p class="text-sm text-[#9a917f] mb-4 break-words">${esc(a.name)}${sub ? ' › ' + esc(sub) : ''}</p>
     <div class="grid grid-cols-2 gap-2 mb-3">
       <a class="btn text-white bg-[#06C755]" target="_blank" href="https://social-plugins.line.me/lineit/share?url=${eu}">LINE</a>
       <a class="btn text-white bg-[#1877F2]" target="_blank" href="https://www.facebook.com/sharer/sharer.php?u=${eu}">Facebook</a>
@@ -639,20 +686,32 @@ function openShare(a = curAlbum){
 function shareAlbumById(id){ const a = adminAlbums.find(x=>x.id===id); if(a) openShare(a); }
 function copyLink(u){ navigator.clipboard.writeText(u).then(()=>toast('คัดลอกลิงก์แล้ว')).catch(()=>toast('คัดลอกไม่สำเร็จ','err')); }
 function openQRId(id){ const a=albums.find(x=>x.id===id)||adminAlbums.find(x=>x.id===id); if(a) openQR(a); }
-function openQR(a){
+function openQR(a, sub){
   if(!a) return; const all = a==='all';
+  if (sub && !all) return openSubQR(a, sub);
   const u = all ? baseUrl() : albumUrl(a);
   const list = (adminAlbums.length?adminAlbums:albums);
-  const title = all ? 'QR Code รวมทุกอัลบั้ม' : 'QR Code เฉพาะอัลบั้ม', sub = all ? 'สแกนเพื่อเปิดหน้ารวมอัลบั้มที่เปิดแสดงผลทั้งหมด' : a.name;
+  const title = all ? 'QR Code รวมทุกอัลบั้ม' : 'QR Code เฉพาะอัลบั้ม', subTxt = all ? 'สแกนเพื่อเปิดหน้ารวมอัลบั้มที่เปิดแสดงผลทั้งหมด' : a.name;
   window._qrName = all ? 'ภาพกิจกรรมทั้งหมด' : a.name;
   openModal(`<div class="text-center">
     <div class="inline-flex gap-1 p-1 card mb-3"><button class="btn ${all?'btn-p':'btn-g'} text-xs px-3 py-1" onclick="openQR('all')">ทุกอัลบั้ม</button>
       <button class="btn ${all?'btn-g':'btn-p'} text-xs px-3 py-1" onclick="${list.length?`openQRId('${all?list[0].id:a.id}')`:''}">เฉพาะอัลบั้ม</button></div>
-    <h3 class="font-bold text-lg">${title}</h3><p class="text-sm text-[#9a917f] mb-3 break-words">${esc(sub)}</p>
+    <h3 class="font-bold text-lg">${title}</h3><p class="text-sm text-[#9a917f] mb-3 break-words">${esc(subTxt)}</p>
     ${all||!list.length?'':`<select class="inp mb-3 text-sm" onchange="openQRId(this.value)">${list.map(x=>`<option value="${x.id}" ${x.id===a.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`}
     <div id="qrBox" class="inline-block p-3 bg-white rounded-xl"></div>
     <p class="text-xs text-[#9a917f] mt-2">สแกนเพื่อดูและดาวน์โหลดภาพกิจกรรม</p>
     <div class="grid grid-cols-2 gap-2 mt-4"><button class="btn btn-p" onclick="printQR(window._qrName)">🖨️ พิมพ์</button><button class="btn btn-g" onclick="dlQR()">⬇️ บันทึก PNG</button></div>
+    <button class="btn btn-g w-full mt-2" onclick="closeModal()">ปิด</button></div>`);
+  new QRCode(byId('qrBox'), { text:u, width:240, height:240, colorDark:'#0a0a0a', correctLevel: QRCode.CorrectLevel.H });
+}
+function openSubQR(a, sub){
+  const u = albumUrl(a, sub); window._qrName = a.name + ' › ' + sub;
+  openModal(`<div class="text-center"><h3 class="font-bold text-lg">QR Code อัลบั้มย่อย</h3>
+    <p class="text-sm text-[#9a917f] mb-3 break-words">${esc(a.name)} › <b class="text-[#c9a24d]">${esc(sub)}</b></p>
+    <div id="qrBox" class="inline-block p-3 bg-white rounded-xl"></div>
+    <p class="text-xs text-[#9a917f] mt-2">สแกนแล้วเข้าอัลบั้มย่อยนี้ได้ทันที</p>
+    <div class="grid grid-cols-2 gap-2 mt-4"><button class="btn btn-p" onclick="printQR(window._qrName)">🖨️ พิมพ์</button><button class="btn btn-g" onclick="dlQR()">⬇️ บันทึก PNG</button></div>
+    <button class="btn btn-g w-full mt-2" onclick="copyLink('${u.replace(/'/g,"\\'")}')">📋 คัดลอกลิงก์</button>
     <button class="btn btn-g w-full mt-2" onclick="closeModal()">ปิด</button></div>`);
   new QRCode(byId('qrBox'), { text:u, width:240, height:240, colorDark:'#0a0a0a', correctLevel: QRCode.CorrectLevel.H });
 }
@@ -828,7 +887,7 @@ async function loadManageFiles(rerender){
     else { [d, cats] = await Promise.all([call('getAlbumFiles', id, TOKEN), call('getCategories', TOKEN, id)]); _mCache = { id, d, cats }; }
     manageCats = cats; manageFilesCache = d.files; mUpdateBar();
     const keep = byId('upCat').value;
-    byId('upCat').innerHTML = `<option value="">ทั่วไป (ไม่แยกหมวด)</option>` + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') + `<option value="__new">＋ สร้างหมวดใหม่...</option>`;
+    byId('upCat').innerHTML = `<option value="">ทั่วไป (อัลบั้มหลัก)</option>` + cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('') + `<option value="__new">＋ สร้างอัลบั้มย่อยใหม่...</option>`;
     if (keep && [...byId('upCat').options].some(o => o.value === keep)) byId('upCat').value = keep;
     byId('upCatNew').classList.toggle('hide', byId('upCat').value !== '__new');
     if (!d.files.length) { box.innerHTML = '<p class="col-span-full text-[#9a917f] text-sm">ยังไม่มีไฟล์</p>'; return; }
@@ -881,6 +940,7 @@ function renderAlbumRows(){
       <div class="text-[11px] text-[#9a917f]">${a.status==='Active'?'แสดง':'ซ่อน'}</div></td>
     <td class="text-right whitespace-nowrap">
       <button class="btn btn-g text-xs px-2" onclick="openAlbumAdmin('${a.id}')" title="ดูอัลบั้ม">👁</button>
+      <button class="btn btn-g text-xs px-2" onclick="subAlbumsUI('${a.id}')" title="อัลบั้มย่อย">📂</button>
       <button class="btn btn-g text-xs px-2" onclick="openQRId('${a.id}')" title="QR">▣</button>
       <button class="btn btn-g text-xs px-2" onclick="buildFaceIndexUI('${a.id}')" title="สร้างดัชนีใบหน้า">🙂</button>
       <button class="btn btn-g text-xs px-2" onclick="albumForm('${a.id}')" title="แก้ไข">✏️</button>
@@ -912,6 +972,52 @@ async function delAlbum(id){
   if(!confirm('ยืนยันลบอัลบั้มนี้?')) return;
   const alsoFolder = confirm('ต้องการย้ายโฟลเดอร์และไฟล์ใน Google Drive ไปถังขยะด้วยหรือไม่?\n(ตกลง = ลบโฟลเดอร์ด้วย, ยกเลิก = ลบเฉพาะรายการอัลบั้ม)');
   try { await call('deleteAlbum', TOKEN, id, alsoFolder); toast('ลบอัลบั้มแล้ว'); await refreshAdminAlbums(); renderAlbumRows(); albums=[]; } catch(e){ authErr(e); }
+}
+
+// ===== ADMIN: จัดการอัลบั้มย่อย =====
+let subAdmin = { albumId: '', list: [] };
+async function subAlbumsUI(albumId){
+  const a = adminAlbums.find(x => x.id === albumId); subAdmin.albumId = albumId;
+  openModal(`<div class="flex items-start justify-between gap-2 mb-3"><div><h3 class="font-bold text-lg">📂 อัลบั้มย่อย</h3><p class="text-sm text-[#9a917f] break-words">${esc(a ? a.name : '')}</p></div>
+    <button class="btn btn-p text-sm shrink-0" onclick="subForm()">＋ สร้าง</button></div><div id="subList"><div class="flex justify-center py-8"><div class="spin"></div></div></div>
+    <button class="btn btn-g w-full mt-3" onclick="closeModal()">ปิด</button>`);
+  byId('modalBox').classList.replace('max-w-md','max-w-lg');
+  try { subAdmin.list = await call('getSubAlbums', TOKEN, albumId); renderSubList(); } catch(e){ authErr(e); }
+}
+function renderSubList(){
+  const q = n => JSON.stringify(n).replace(/"/g,'&quot;');
+  byId('subList').innerHTML = subAdmin.list.length ? subAdmin.list.map(s => `<div class="flex items-center gap-3 py-2 border-b border-[#2e2a22]">
+      <div class="w-14 h-14 rounded-lg overflow-hidden bg-[#1c1c1c] flex items-center justify-center shrink-0">${s.cover ? `<img src="${s.cover}" class="w-full h-full object-cover">` : '📂'}</div>
+      <div class="min-w-0 flex-1"><div class="font-medium truncate">${s.hasPassword?'🔒 ':''}${esc(s.name)}</div><div class="text-xs text-[#9a917f] truncate">${s.count} ไฟล์${s.description ? ' • ' + esc(s.description) : ''}</div></div>
+      <div class="flex gap-1 shrink-0"><button class="btn btn-g text-xs px-2" title="QR" onclick="openQR(adminAlbums.find(x=>x.id==='${subAdmin.albumId}'), ${q(s.name)})">▣</button>
+        <button class="btn btn-g text-xs px-2" title="แก้ไข" onclick="subForm(${q(s.name)})">✏️</button>
+        <button class="btn btn-d text-xs px-2" title="ลบ" onclick="subDelete(${q(s.name)})">🗑</button></div></div>`).join('')
+    : '<p class="text-sm text-[#9a917f] text-center py-6">ยังไม่มีอัลบั้มย่อย — กด "＋ สร้าง" เพื่อเพิ่ม<br>เช่น พิธีเปิด, การแข่งขัน, ภาพหมู่, งานเลี้ยง</p>';
+}
+function subForm(name){
+  const s = subAdmin.list.find(x => x.name === name) || {};
+  const q = JSON.stringify(name || '').replace(/"/g,'&quot;');
+  openModal(`<h3 class="font-bold text-lg mb-4">${name ? 'แก้ไขอัลบั้มย่อย' : 'สร้างอัลบั้มย่อย'}</h3>
+    <label class="text-sm text-[#9a917f]">ชื่ออัลบั้มย่อย *</label><input id="sbName" class="inp mb-2" value="${esc(s.name || '')}" placeholder="เช่น พิธีเปิด">
+    <label class="text-sm text-[#9a917f]">คำอธิบาย</label><textarea id="sbDesc" class="inp mb-2" rows="2">${esc(s.description || '')}</textarea>
+    <label class="text-sm text-[#9a917f]">🔒 รหัสผ่านอัลบั้มย่อย <span class="text-xs">(ไม่บังคับ${s.hasPassword ? ' — เว้นว่าง = คงรหัสเดิม' : ''})</span></label>
+    <input id="sbPass" class="inp mb-1" autocomplete="off" placeholder="${s.hasPassword ? 'มีรหัสแล้ว — กรอกเพื่อเปลี่ยน' : 'อย่างน้อย 4 ตัวอักษร'}">
+    ${s.hasPassword ? '<label class="flex items-center gap-2 text-sm mb-1"><input id="sbNoPass" type="checkbox" class="w-4 h-4 accent-[#c9a24d]"> ยกเลิกรหัสผ่าน</label>' : ''}
+    <p id="sbErr" class="text-sm text-red-400 my-2"></p>
+    <button id="sbBtn" class="btn btn-p w-full" onclick="subSave(${q})">💾 บันทึก</button>
+    <button class="btn btn-g w-full mt-2" onclick="subAlbumsUI(subAdmin.albumId)">← กลับ</button>`);
+}
+async function subSave(oldName){
+  const b = byId('sbBtn'); b.disabled = true; byId('sbErr').textContent = '';
+  try {
+    subAdmin.list = await call('saveSubAlbum', TOKEN, subAdmin.albumId, { oldName, name: byId('sbName').value.trim(), description: byId('sbDesc').value.trim(),
+      password: byId('sbPass').value.trim(), removePassword: !!(byId('sbNoPass') && byId('sbNoPass').checked) });
+    toast('บันทึกอัลบั้มย่อยแล้ว'); _mCache = null; subAlbumsUI(subAdmin.albumId);
+  } catch(e){ byId('sbErr').textContent = e.message; b.disabled = false; }
+}
+async function subDelete(name){
+  if (!confirm('ลบอัลบั้มย่อย "' + name + '" ?\nภาพในอัลบั้มย่อยจะถูกย้ายไปหมวด "ทั่วไป" ของอัลบั้มหลัก (ไฟล์ไม่หาย)')) return;
+  try { await call('deleteCategory', TOKEN, subAdmin.albumId, name); toast('ลบอัลบั้มย่อยแล้ว'); _mCache = null; subAlbumsUI(subAdmin.albumId); } catch(e){ toast(e.message,'err'); }
 }
 
 // stats
