@@ -15,7 +15,7 @@ bucket_name = "photodrop-files"
 binding = "DB"
 database_name = "photodrop-db"
 # ใส่ Database ID จาก Cloudflare Dashboard → Storage & Databases → D1 → photodrop-db
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "3f5751bd-52c2-4d37-a1f8-26260d845f09"
 
 [triggers]
 crons = ["17 20 * * *"]
