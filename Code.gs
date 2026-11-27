@@ -244,13 +244,27 @@ function albumOut_(a, withCount) {
   }
   return o;
 }
+// ====== PUBLIC STATS (ยอดเข้าชม/ดาวน์โหลด ให้ผู้ใช้เห็น — แคช 5 นาที) ======
+function statAgg_() {
+  const c = cacheGet_('stat_agg'); if (c) return c;
+  const agg = { a: {}, f: {} };
+  rows_(SHEET_STATS).forEach(r => {
+    const A = agg.a[r.albumId] = agg.a[r.albumId] || { v: 0, d: 0 };
+    if (r.action === 'album_view') A.v++;
+    else { A.d++; if (r.fileId) agg.f[r.fileId] = (agg.f[r.fileId] || 0) + 1; }
+  });
+  cachePut_('stat_agg', agg);
+  return agg;
+}
 function getPublicAlbums() {
+  const st = statAgg_().a;
+  const withStats = list => list.map(a => Object.assign({}, a, { views: (st[a.id] || {}).v || 0, downloads: (st[a.id] || {}).d || 0 }));
   const c = cacheGet_('pub_albums');
-  if (c && c.day === fmtDate_(new Date())) return c.list;
+  if (c && c.day === fmtDate_(new Date())) return withStats(c.list);
   setupSheets_();
   const list = rows_(SHEET_ALBUMS).filter(isAlbumVisible_).reverse().map(a => albumOut_(a, true));
   cachePut_('pub_albums', { day: fmtDate_(new Date()), list });
-  return list;
+  return withStats(list);
 }
 function getAlbumFiles(albumId, token, pass) {
   const a = findAlbum_(albumId);
@@ -266,7 +280,9 @@ function getAlbumFiles(albumId, token, pass) {
     return { name: n, description: m.description || '', count: fs.length, hasPassword: !!m.passwordHash, locked: !!locked[n], cover: (!locked[n] && cov) ? cov.thumb : '' };
   }).filter(x => x.count || staff);
   const cats = [DEFAULT_CATEGORY].concat(names).filter(c => files.some(f => f.category === c));
-  return { album: albumOut_(a, false), files, categories: cats, subs, generalCount: all.filter(f => f.category === DEFAULT_CATEGORY).length };
+  const agg = statAgg_(); files.forEach(f => f.dl = agg.f[f.id] || 0);
+  const as = agg.a[albumId] || {};
+  return { album: Object.assign(albumOut_(a, false), { views: as.v || 0, downloads: as.d || 0 }), files, categories: cats, subs, generalCount: all.filter(f => f.category === DEFAULT_CATEGORY).length };
 }
 
 // ====== STATS ======
