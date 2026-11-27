@@ -156,7 +156,9 @@ async function sendLine(env, text) {
   if (!r.ok) fail('LINE ตอบกลับ ' + r.status + ': ' + (await r.text()).slice(0, 200));
   return true;
 }
-const publicUrl = async env => (await getSetting(env, 'publicUrl')) || DEFAULT_PUBLIC_URL;
+// ลิงก์สาธารณะ (QR/แชร์/LINE) — ค่าเริ่มต้น = ลิงก์ของ Worker นี้เอง เปลี่ยนได้ในตั้งค่าระบบ
+let ORIGIN = '';
+const publicUrl = async env => (await getSetting(env, 'publicUrl')) || (ORIGIN ? ORIGIN + '/' : DEFAULT_PUBLIC_URL);
 
 // ---------- delete helpers ----------
 async function removeFiles(env, ids) {
@@ -608,6 +610,7 @@ async function migrate(env, req, what) {
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url), path = url.pathname, origin = url.origin;
+    ORIGIN = origin;
     try {
       await ensureSchema(env);
       if (path === '/api' && req.method === 'POST') {

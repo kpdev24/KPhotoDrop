@@ -750,7 +750,7 @@ function migrateToCloudflare() {
     // หมวดที่มีแต่โฟลเดอร์ (ยังไม่มีข้อมูลในชีต) ก็ย้ายด้วย
     rows_(SHEET_ALBUMS).forEach(a => { try { listCategories_(a.folderId).forEach(n => { if (!subs.some(s => s.albumId === a.id && s.name === n)) subs.push({ albumId: a.id, name: n }); }); } catch (e) {} });
     const settings = {}; ['publicUrl', 'lineEnabled', 'lineMode', 'lineTo', 'lineToken'].forEach(k => { const v = getSetting_(k); if (v) settings[k] = v; });
-    if (!settings.publicUrl) settings.publicUrl = DEFAULT_PUBLIC_URL;
+    delete settings.publicUrl; // ระบบ Cloudflare ใช้ลิงก์ workers.dev ของตัวเองสำหรับ QR
     const faces = {};
     rows_(SHEET_ALBUMS).forEach(a => { try { const f = faceFile_(a.folderId); if (f) faces[a.id] = JSON.parse(f.getBlob().getDataAsString()); } catch (e) {} });
     const r = cfPost_('/migrate/meta', { albums, users, subs, settings, faces });
