@@ -1,5 +1,5 @@
 # PhotoDrop — Cloudflare Workers + R2 + D1
-name = "photodrop"
+name = "kphotodrop"
 main = "src/worker.js"
 compatibility_date = "2024-11-01"
 

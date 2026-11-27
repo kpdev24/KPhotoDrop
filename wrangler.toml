@@ -1,0 +1,20 @@
+# PhotoDrop — Cloudflare Workers + R2 + D1 (ไฟล์นี้ให้ Cloudflare deploy จากโฟลเดอร์หลักของ repo ได้เลย)
+name = "kphotodrop"
+main = "cloudflare/src/worker.js"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./cloudflare/public"
+binding = "ASSETS"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "photodrop-files"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "photodrop-db"
+database_id = "3f5751bd-52c2-4d37-a1f8-26260d845f09"
+
+[triggers]
+crons = ["17 20 * * *"]
