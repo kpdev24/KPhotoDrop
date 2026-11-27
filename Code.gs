@@ -699,3 +699,100 @@ function saveFaceIndex(token, albumId, partial) {
     return Object.keys(index).length;
   } finally { lock.releaseLock(); }
 }
+
+// ====================================================================
+// ====== ย้ายข้อมูลไป Cloudflare (R2 + D1) — รหัสอัลบั้ม/ไฟล์เดิม QR เดิมใช้ได้ต่อ ======
+// วิธีใช้: ใส่ CF_WORKER_URL และ CF_MIGRATE_KEY ด้านล่าง แล้วกด Run ฟังก์ชัน migrateToCloudflare
+// ระบบจะทำงานต่อเองอัตโนมัติทุก 1 นาทีจนย้ายครบ (ดูความคืบหน้าในชีต "Migration")
+// ====================================================================
+const CF_WORKER_URL = '';   // เช่น https://photodrop.xxxx.workers.dev
+const CF_MIGRATE_KEY = '';  // คัดลอกจากหน้า ตั้งค่าระบบ ของเว็บบน Cloudflare
+
+function cfPost_(path, payload, headers) {
+  if (!CF_WORKER_URL || !CF_MIGRATE_KEY) throw new Error('กรุณาใส่ CF_WORKER_URL และ CF_MIGRATE_KEY ใน Code.gs ก่อน');
+  const isBlob = payload && typeof payload.getBytes === 'function';
+  const r = UrlFetchApp.fetch(CF_WORKER_URL.replace(/\/$/, '') + path, {
+    method: 'post', muteHttpExceptions: true,
+    contentType: isBlob ? (payload.getContentType() || 'application/octet-stream') : 'application/json',
+    headers: Object.assign({ 'x-migrate-key': CF_MIGRATE_KEY }, headers || {}),
+    payload: isBlob ? payload.getBytes() : JSON.stringify(payload) });
+  const t = r.getContentText();
+  if (r.getResponseCode() !== 200) throw new Error('Cloudflare ' + r.getResponseCode() + ': ' + t.slice(0, 200));
+  return JSON.parse(t);
+}
+const CRC_TABLE_ = (function () { const t = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32_(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE_[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+function migLog_(msg) {
+  const ss = getSS_(); let sh = ss.getSheetByName('Migration');
+  if (!sh) { sh = ss.insertSheet('Migration'); sh.appendRow(['เวลา', 'ข้อความ']); }
+  sh.appendRow([new Date(), msg]); Logger.log(msg);
+}
+function driveThumb_(id, size) {
+  try {
+    const r = UrlFetchApp.fetch('https://drive.google.com/thumbnail?id=' + id + '&sz=w' + size,
+      { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() }, muteHttpExceptions: true, followRedirects: true });
+    return r.getResponseCode() === 200 ? r.getBlob().setContentType('image/jpeg') : null;
+  } catch (e) { return null; }
+}
+
+function migrateToCloudflare() {
+  const started = Date.now(), props = PropertiesService.getScriptProperties();
+  const timeLeft = () => Date.now() - started < 4.5 * 60 * 1000;
+  setupSheets_();
+  // 1) ข้อมูลอัลบั้ม ผู้ใช้ อัลบั้มย่อย ตั้งค่า ดัชนีใบหน้า (ทำครั้งแรกครั้งเดียว)
+  if (props.getProperty('MIG_META') !== 'done') {
+    const albums = rows_(SHEET_ALBUMS).reverse().map(a => ({ id: a.id, name: a.name, description: a.description, status: a.status,
+      startDate: fmtDate_(a.startDate), endDate: fmtDate_(a.endDate), createdAt: a.createdAt instanceof Date ? a.createdAt.toISOString() : String(a.createdAt || ''),
+      createdBy: a.createdBy, passwordHash: a.passwordHash || '' }));
+    const users = rows_(SHEET_USERS).map(u => ({ id: u.id, username: u.username, passwordHash: u.passwordHash, name: u.name, role: u.role, status: u.status,
+      createdAt: u.createdAt instanceof Date ? u.createdAt.toISOString() : String(u.createdAt || '') }));
+    const subs = rows_(SHEET_SUBS).map(r => ({ albumId: r.albumId, name: String(r.name), description: r.description, passwordHash: r.passwordHash }));
+    // หมวดที่มีแต่โฟลเดอร์ (ยังไม่มีข้อมูลในชีต) ก็ย้ายด้วย
+    rows_(SHEET_ALBUMS).forEach(a => { try { listCategories_(a.folderId).forEach(n => { if (!subs.some(s => s.albumId === a.id && s.name === n)) subs.push({ albumId: a.id, name: n }); }); } catch (e) {} });
+    const settings = {}; ['publicUrl', 'lineEnabled', 'lineMode', 'lineTo', 'lineToken'].forEach(k => { const v = getSetting_(k); if (v) settings[k] = v; });
+    if (!settings.publicUrl) settings.publicUrl = DEFAULT_PUBLIC_URL;
+    const faces = {};
+    rows_(SHEET_ALBUMS).forEach(a => { try { const f = faceFile_(a.folderId); if (f) faces[a.id] = JSON.parse(f.getBlob().getDataAsString()); } catch (e) {} });
+    const r = cfPost_('/migrate/meta', { albums, users, subs, settings, faces });
+    migLog_('✅ ย้ายข้อมูลอัลบั้ม/ผู้ใช้/อัลบั้มย่อย/ตั้งค่า แล้ว (' + r.rows + ' รายการ)');
+    props.setProperty('MIG_META', 'done');
+  }
+  // 2) สถิติ
+  if (props.getProperty('MIG_STATS') !== 'done') {
+    const st = sheet_(SHEET_STATS).getDataRange().getValues(); st.shift();
+    const rows = st.map(r => [r[0] instanceof Date ? r[0].getTime() : Number(r[0]) || 0, fmtDate_(r[1]), r[2], r[3], r[4]]);
+    for (let i = 0; i < rows.length; i += 2000) cfPost_('/migrate/stats', rows.slice(i, i + 2000));
+    migLog_('✅ ย้ายสถิติแล้ว ' + rows.length + ' รายการ');
+    props.setProperty('MIG_STATS', 'done');
+  }
+  // 3) ไฟล์ภาพ/วิดีโอ (ข้ามไฟล์ที่ย้ายแล้ว ทำต่อจากเดิมได้)
+  let moved = 0, skippedBig = [];
+  const albums = rows_(SHEET_ALBUMS);
+  for (const a of albums) {
+    if (!timeLeft()) break;
+    let list; try { list = collectFiles_(a.folderId); } catch (e) { migLog_('⚠️ เปิดโฟลเดอร์อัลบั้มไม่ได้: ' + a.name); continue; }
+    const have = cfPost_('/migrate/has', list.map(x => x.f.getId())).have;
+    for (const x of list) {
+      if (!timeLeft()) break;
+      const f = x.f, id = f.getId();
+      if (have.indexOf(id) > -1) continue;
+      if (f.getSize() > 45 * 1024 * 1024) { skippedBig.push(a.name + ' / ' + f.getName()); continue; }
+      const blob = f.getBlob(), bytes = blob.getBytes();
+      const H = { 'x-id': id, 'x-album': encodeURIComponent(a.id), 'x-category': encodeURIComponent(x.cat), 'x-name': encodeURIComponent(f.getName()),
+        'x-mime': f.getMimeType(), 'x-created': String(f.getDateCreated().getTime()), 'x-crc': String(crc32_(bytes)), 'x-variant': 'o' };
+      cfPost_('/migrate/file', blob, H);
+      const t = driveThumb_(id, 400); if (t) cfPost_('/migrate/file', t, { 'x-id': id, 'x-variant': 't' });
+      if (f.getMimeType().indexOf('image') === 0 && f.getSize() > 900 * 1024) { const v = driveThumb_(id, 1600); if (v) cfPost_('/migrate/file', v, { 'x-id': id, 'x-variant': 'v' }); }
+      moved++;
+    }
+  }
+  const status = cfPost_('/migrate/status', {});
+  migLog_('📦 รอบนี้ย้าย ' + moved + ' ไฟล์ • บน Cloudflare มีแล้ว ' + status.files + ' ไฟล์ (' + (status.bytes / 1048576).toFixed(1) + ' MB)' +
+    (skippedBig.length ? ' • ⚠️ ไฟล์ใหญ่เกิน 45MB ต้องอัปโหลดเองผ่านเว็บใหม่: ' + skippedBig.join(', ') : ''));
+  // ตั้งเวลาทำต่ออัตโนมัติ ถ้ายังไม่ครบ
+  ScriptApp.getProjectTriggers().filter(t => t.getHandlerFunction() === 'migrateToCloudflare').forEach(t => ScriptApp.deleteTrigger(t));
+  if (!timeLeft()) { ScriptApp.newTrigger('migrateToCloudflare').timeBased().after(60 * 1000).create(); migLog_('⏳ ยังไม่ครบ — จะทำต่ออัตโนมัติในอีก 1 นาที'); }
+  else migLog_('🎉 ย้ายข้อมูลครบแล้ว! ขั้นต่อไป: เปลี่ยนหน้า GitHub Pages ให้ชี้ไป Cloudflare');
+}
+// เริ่มย้ายใหม่ทั้งหมด (ล้างสถานะ) — ใช้เมื่อต้องการย้ายข้อมูลอัลบั้ม/ตั้งค่าซ้ำ
+function resetCloudflareMigration() { const p = PropertiesService.getScriptProperties(); p.deleteProperty('MIG_META'); p.deleteProperty('MIG_STATS'); Logger.log('รีเซ็ตแล้ว'); }

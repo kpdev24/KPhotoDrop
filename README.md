@@ -44,3 +44,6 @@ https://kpdev24.github.io/KPhotoDrop/ (`docs/index.html` ฝังเว็บ�
 - **ถ้าแก้ `Index.html` แล้วใช้คลาส Tailwind ใหม่** ให้รัน `bash tools/build-css.sh` (ต้องมี Node.js) เพื่อสร้าง CSS ใหม่ระหว่าง `<!-- TW:START -->` / `<!-- TW:END -->`
 - ห้ามมีอักขระ `/*` ใน `Index.html` (Apps Script ตัดโค้ดผิด ทำให้หน้าเว็บว่าง)
 - อัปโหลดโหมด **ขนาดโซเชียล 2048px** (ค่าเริ่มต้น) ย่อภาพในเบราว์เซอร์ก่อนส่ง → ไฟล์เล็กลง 5–10 เท่า
+
+## Cloudflare (เร็วกว่า)
+ดู [`cloudflare/README.md`](cloudflare/README.md) — ย้ายจาก Apps Script + Drive ไป Workers + R2 + D1 โดย QR Code เดิมใช้ได้ต่อ

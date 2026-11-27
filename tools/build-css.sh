@@ -32,3 +32,6 @@ for js in re.findall(r'<script>(.*?)</script>', s, re.S):
 if bad: print('❌ ' + '\n❌ '.join(bad)); sys.exit(1)
 print('✅ ผ่านการตรวจรูปแบบสำหรับ Apps Script')
 PY
+
+# สร้างหน้าเว็บสำหรับ Cloudflare ด้วย (cloudflare/public/index.html)
+bash cloudflare/build.sh

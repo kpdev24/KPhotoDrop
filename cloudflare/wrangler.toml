@@ -1,0 +1,21 @@
+# PhotoDrop — Cloudflare Workers + R2 + D1
+name = "photodrop"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "photodrop-files"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "photodrop-db"
+# ใส่ Database ID จาก Cloudflare Dashboard → Storage & Databases → D1 → photodrop-db
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[triggers]
+crons = ["17 20 * * *"]
